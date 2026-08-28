@@ -8,8 +8,8 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
   const port = configService.get<number>('PORT') ?? 3000;
-  
+
   await app.listen(port);
   Logger.log(`🚀 Application is running on: http://localhost:${port}`);
 }
-bootstrap();
+void bootstrap();
