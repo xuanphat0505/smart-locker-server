@@ -18,8 +18,8 @@ import { RolesGuard } from './guards/roles.guard';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'default_secret_key',
-        signOptions: { expiresIn: '15m' }, // Token hết hạn sau 15 phút
+        secret: configService.get<string>('JWT_ACCESS_SECRET_KEY'),
+        signOptions: { expiresIn: '15m' }, // Token truy cập hết hạn sau 15 phút
       }),
     }),
   ],
