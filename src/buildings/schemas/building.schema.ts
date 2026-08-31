@@ -1,4 +1,4 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Prop, Schema, SchemaFactory, raw } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { BuildingStatus } from '../enums/building-status.enum';
 
@@ -38,6 +38,28 @@ export class Building extends Document {
 
   @Prop({ required: false, trim: true })
   description?: string;
+
+  // Tọa độ địa lý GeoJSON Point phục vụ truy vấn định vị GPS không gian
+  @Prop(
+    raw({
+      type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point',
+      },
+      coordinates: {
+        type: [Number], // [Kinh độ (Longitude), Vĩ độ (Latitude)]
+        required: false,
+      },
+    }),
+  )
+  location?: {
+    type: string;
+    coordinates: [number, number];
+  };
 }
 
 export const BuildingSchema = SchemaFactory.createForClass(Building);
+
+// Đánh chỉ mục 2dsphere hỗ trợ tìm kiếm lân cận $geoNear siêu tốc
+BuildingSchema.index({ location: '2dsphere' });

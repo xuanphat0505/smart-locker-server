@@ -3,10 +3,13 @@ import {
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { BuildingStatus } from '../enums/building-status.enum';
 
 // DTO khởi tạo Tòa Nhà mới do System Admin thực hiện
@@ -69,6 +72,26 @@ export class CreateBuildingDto {
   @IsOptional()
   @IsString({ message: 'Mô tả phải là chuỗi ký tự' })
   description?: string;
+
+  @ApiPropertyOptional({
+    example: 10.84231,
+    description: 'Vĩ độ địa lý (Latitude)',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Vĩ độ latitude phải là số' })
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiPropertyOptional({
+    example: 106.84025,
+    description: 'Kinh độ địa lý (Longitude)',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Kinh độ longitude phải là số' })
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
 }
 
 // DTO cập nhật thông tin Tòa Nhà
@@ -81,4 +104,39 @@ export class UpdateBuildingDto extends PartialType(CreateBuildingDto) {
   @IsOptional()
   @IsEnum(BuildingStatus, { message: 'Trạng thái tòa nhà không hợp lệ' })
   status?: BuildingStatus;
+}
+
+// DTO tham số truy vấn tìm kiếm Tòa Nhà gần vị trí GPS hiện tại
+export class FindNearbyBuildingsDto {
+  @ApiProperty({
+    example: 10.84231,
+    description: 'Vĩ độ GPS hiện tại của thiết bị (Latitude)',
+  })
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Vĩ độ lat phải là số' })
+  @Min(-90)
+  @Max(90)
+  lat: number;
+
+  @ApiProperty({
+    example: 106.84025,
+    description: 'Kinh độ GPS hiện tại của thiết bị (Longitude)',
+  })
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Kinh độ lng phải là số' })
+  @Min(-180)
+  @Max(180)
+  lng: number;
+
+  @ApiPropertyOptional({
+    example: 5000,
+    description:
+      'Bán kính tìm kiếm tối đa tính bằng mét (mặc định: 5000m = 5km)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Bán kính radius phải là số' })
+  @Min(100)
+  @Max(100000)
+  radius?: number;
 }
