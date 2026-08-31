@@ -11,7 +11,11 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { BuildingsService } from './buildings.service';
-import { CreateBuildingDto, UpdateBuildingDto } from './dto';
+import {
+  CreateBuildingDto,
+  UpdateBuildingDto,
+  FindNearbyBuildingsDto,
+} from './dto';
 import { BuildingStatus } from './enums/building-status.enum';
 import { Building } from './schemas/building.schema';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -20,6 +24,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import {
   ApiFindAllBuildingsDoc,
+  ApiFindNearbyBuildingsDoc,
   ApiFindOneBuildingDoc,
   ApiCreateBuildingDoc,
   ApiUpdateBuildingDoc,
@@ -36,6 +41,13 @@ export class BuildingsController {
   @ApiFindAllBuildingsDoc()
   async findAll(@Query('status') status?: BuildingStatus): Promise<Building[]> {
     return this.buildingsService.findAll(status || BuildingStatus.ACTIVE);
+  }
+
+  // Tìm kiếm danh sách Tòa Nhà gần vị trí GPS hiện tại (API công khai phục vụ Mobile App)
+  @Get('nearby')
+  @ApiFindNearbyBuildingsDoc()
+  async findNearby(@Query() query: FindNearbyBuildingsDto): Promise<any[]> {
+    return this.buildingsService.findNearby(query.lat, query.lng, query.radius);
   }
 
   // Lấy thông tin chi tiết một Tòa Nhà theo mã id

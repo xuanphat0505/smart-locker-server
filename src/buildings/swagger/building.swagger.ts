@@ -1,5 +1,5 @@
 import { applyDecorators } from '@nestjs/common';
-import { ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 
 // Tài liệu Swagger cho endpoint lấy danh sách tất cả Tòa Nhà
 export function ApiFindAllBuildingsDoc() {
@@ -12,6 +12,48 @@ export function ApiFindAllBuildingsDoc() {
     ApiResponse({
       status: 200,
       description: 'Lấy danh sách tòa nhà thành công',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint tìm kiếm Tòa Nhà gần vị trí GPS
+export function ApiFindNearbyBuildingsDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Tìm kiếm Tòa Nhà gần vị trí GPS hiện tại',
+      description:
+        'API công khai tính toán khoảng cách cầu theo chỉ mục 2dsphere của MongoDB và trả về danh sách tòa nhà gần nhất kèm khoảng cách (mét)',
+    }),
+    ApiQuery({
+      name: 'lat',
+      required: true,
+      type: Number,
+      example: 10.84231,
+      description: 'Vĩ độ GPS của thiết bị',
+    }),
+    ApiQuery({
+      name: 'lng',
+      required: true,
+      type: Number,
+      example: 106.84025,
+      description: 'Kinh độ GPS của thiết bị',
+    }),
+    ApiQuery({
+      name: 'radius',
+      required: false,
+      type: Number,
+      example: 5000,
+      description:
+        'Bán kính tìm kiếm tối đa tính bằng mét (mặc định: 5000m = 5km)',
+    }),
+    ApiResponse({
+      status: 200,
+      description:
+        'Tìm kiếm tòa nhà lân cận thành công (đã sắp xếp từ gần đến xa)',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Tọa độ lat/lng không hợp lệ',
     }),
   );
 }

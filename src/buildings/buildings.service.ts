@@ -26,12 +26,25 @@ export class BuildingsService {
       throw new ConflictException('Mã tòa nhà này đã tồn tại trong hệ thống');
     }
 
+    const { latitude, longitude, ...buildingData } = dto;
+    let locationData:
+      | { type: string; coordinates: [number, number] }
+      | undefined;
+
+    if (latitude !== undefined && longitude !== undefined) {
+      locationData = {
+        type: 'Point',
+        coordinates: [longitude, latitude],
+      };
+    }
+
     const newBuilding = new this.buildingModel({
-      ...dto,
+      ...buildingData,
       name: dto.name.trim(),
       code: normalizedCode,
       address: dto.address.trim(),
       status: BuildingStatus.ACTIVE,
+      ...(locationData ? { location: locationData } : {}),
     });
 
     return newBuilding.save();
@@ -41,6 +54,31 @@ export class BuildingsService {
   async findAll(status?: BuildingStatus): Promise<Building[]> {
     const filter = status ? { status } : {};
     return this.buildingModel.find(filter).sort({ name: 1 }).exec();
+  }
+
+  // Tìm kiếm danh sách Tòa Nhà gần vị trí GPS hiện tại sử dụng chỉ mục 2dsphere
+  async findNearby(
+    lat: number,
+    lng: number,
+    radiusInMeters = 5000,
+  ): Promise<any[]> {
+    return this.buildingModel.aggregate([
+      {
+        $geoNear: {
+          near: {
+            type: 'Point',
+            coordinates: [lng, lat],
+          },
+          distanceField: 'distance',
+          maxDistance: radiusInMeters,
+          spherical: true,
+          query: { status: BuildingStatus.ACTIVE },
+        },
+      },
+      {
+        $sort: { distance: 1 },
+      },
+    ]);
   }
 
   // Tìm kiếm thông tin chi tiết một Tòa Nhà theo mã định danh ObjectId
@@ -74,8 +112,18 @@ export class BuildingsService {
       dto.code = normalizedCode;
     }
 
+    const { latitude, longitude, ...restDto } = dto;
+    const updatePayload: Record<string, unknown> = { ...restDto };
+
+    if (latitude !== undefined && longitude !== undefined) {
+      updatePayload.location = {
+        type: 'Point',
+        coordinates: [longitude, latitude],
+      };
+    }
+
     const updated = await this.buildingModel
-      .findByIdAndUpdate(id, dto, { new: true })
+      .findByIdAndUpdate(id, { $set: updatePayload }, { new: true })
       .exec();
 
     if (!updated) {
