@@ -1,6 +1,69 @@
 import { applyDecorators } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 
+// Tài liệu Swagger cho endpoint Quản trị viên cấp cao System Admin tạo tài khoản Ban Quản Lý Tòa Nhà
+export function ApiCreateBuildingAdminDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Khởi tạo tài khoản Ban Quản Lý Tòa Nhà',
+      description:
+        'Dành riêng cho Quản trị viên cấp cao System Admin tạo tài khoản BQL và liên kết với một Tòa nhà cụ thể',
+    }),
+    ApiResponse({
+      status: 201,
+      description: 'Khởi tạo tài khoản Ban Quản Lý thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description:
+        'Dữ liệu đầu vào không hợp lệ hoặc mã tòa nhà không đúng định dạng',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Không có quyền truy cập (Chỉ dành cho System Admin)',
+    }),
+    ApiResponse({
+      status: 409,
+      description: 'Email hoặc Số điện thoại đã tồn tại trên hệ thống',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint Ban Quản Lý tạo trực tiếp tài khoản Cư Dân
+export function ApiCreateResidentByAdminDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Khởi tạo tài khoản Cư Dân trực tiếp',
+      description:
+        'Dành riêng cho Ban Quản Lý Tòa Nhà tạo sẵn tài khoản cư dân có trạng thái ACTIVE trong chung cư của mình',
+    }),
+    ApiResponse({
+      status: 201,
+      description: 'Khởi tạo tài khoản cư dân thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Tài khoản quản trị chưa được liên kết với Tòa nhà nào',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Không có quyền truy cập (Chỉ dành cho Building Admin)',
+    }),
+    ApiResponse({
+      status: 409,
+      description: 'Email hoặc Số điện thoại đã tồn tại trên hệ thống',
+    }),
+  );
+}
+
 // Tài liệu Swagger cho endpoint lấy thông tin hồ sơ tài khoản cá nhân của người dùng đang đăng nhập
 export function ApiGetProfileDoc() {
   return applyDecorators(
@@ -26,7 +89,7 @@ export function ApiGetPendingResidentsDoc() {
     ApiOperation({
       summary: 'Lấy danh sách cư dân chờ duyệt thuộc tòa nhà',
       description:
-        'Dành cho Ban Quản Lý Tòa Nhà (Building Admin) xem danh sách cư dân có trạng thái PENDING',
+        'Dành riêng cho Ban Quản Lý Tòa Nhà (Building Admin) xem danh sách cư dân có trạng thái PENDING',
     }),
     ApiResponse({
       status: 200,
@@ -38,8 +101,7 @@ export function ApiGetPendingResidentsDoc() {
     }),
     ApiResponse({
       status: 403,
-      description:
-        'Không có quyền truy cập (Chỉ dành cho Building Admin hoặc System Admin)',
+      description: 'Không có quyền truy cập (Chỉ dành cho Building Admin)',
     }),
   );
 }
@@ -55,6 +117,10 @@ export function ApiApproveResidentDoc() {
     ApiResponse({
       status: 200,
       description: 'Phê duyệt tài khoản cư dân thành công',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Không có quyền truy cập (Chỉ dành cho Building Admin)',
     }),
     ApiResponse({
       status: 404,
@@ -76,19 +142,23 @@ export function ApiRejectResidentDoc() {
       description: 'Từ chối hồ sơ cư dân thành công',
     }),
     ApiResponse({
+      status: 403,
+      description: 'Không có quyền truy cập (Chỉ dành cho Building Admin)',
+    }),
+    ApiResponse({
       status: 404,
       description: 'Không tìm thấy hồ sơ cư dân',
     }),
   );
 }
 
-// Tài liệu Swagger cho endpoint lấy danh sách tất cả người dùng
+// Tài liệu Swagger cho endpoint lấy danh sách người dùng theo phạm vi phân quyền
 export function ApiFindAllUsersDoc() {
   return applyDecorators(
     ApiOperation({
-      summary: 'Lấy danh sách tất cả người dùng',
+      summary: 'Lấy danh sách người dùng theo phạm vi phân quyền',
       description:
-        'Trả về danh sách tất cả tài khoản trong hệ thống ngoại trừ mật khẩu (Dành riêng cho Quản trị viên cấp cao System Admin)',
+        'System Admin xem toàn bộ người dùng trong hệ thống; Building Admin chỉ xem danh sách cư dân thuộc tòa nhà do mình quản lý',
     }),
     ApiResponse({
       status: 200,
@@ -100,7 +170,8 @@ export function ApiFindAllUsersDoc() {
     }),
     ApiResponse({
       status: 403,
-      description: 'Không có quyền truy cập (Chỉ dành cho System Admin)',
+      description:
+        'Không có quyền truy cập (Chỉ dành cho System Admin hoặc Building Admin)',
     }),
   );
 }
@@ -111,7 +182,7 @@ export function ApiFindOneUserDoc() {
     ApiOperation({
       summary: 'Lấy chi tiết người dùng theo ID',
       description:
-        'Trả về thông tin chi tiết của một tài khoản theo mã định danh ObjectId',
+        'System Admin xem bất kỳ người dùng nào; Building Admin chỉ xem được cư dân thuộc tòa nhà của mình',
     }),
     ApiResponse({ status: 200, description: 'Tìm thấy thông tin người dùng' }),
     ApiResponse({
@@ -120,8 +191,11 @@ export function ApiFindOneUserDoc() {
     }),
     ApiResponse({
       status: 403,
-      description:
-        'Không có quyền truy cập (Dành cho System Admin hoặc Building Admin)',
+      description: 'Không có quyền truy cập thông tin người dùng này',
+    }),
+    ApiResponse({
+      status: 404,
+      description: 'Không tìm thấy người dùng',
     }),
   );
 }
@@ -132,7 +206,7 @@ export function ApiRemoveUserDoc() {
     ApiOperation({
       summary: 'Xóa tài khoản người dùng',
       description:
-        'Xóa vĩnh viễn tài khoản người dùng khỏi cơ sở dữ liệu theo mã định danh',
+        'System Admin xóa bất kỳ tài khoản nào; Building Admin chỉ được phép xóa tài khoản cư dân thuộc tòa nhà của mình',
     }),
     ApiResponse({
       status: 200,
@@ -144,7 +218,11 @@ export function ApiRemoveUserDoc() {
     }),
     ApiResponse({
       status: 403,
-      description: 'Không có quyền truy cập (Chỉ dành cho System Admin)',
+      description: 'Không có quyền xóa tài khoản người dùng này',
+    }),
+    ApiResponse({
+      status: 404,
+      description: 'Không tìm thấy người dùng để xóa',
     }),
   );
 }
