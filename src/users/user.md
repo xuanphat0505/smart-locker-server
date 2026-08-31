@@ -2,11 +2,11 @@
 
 ## 1. Tổng Quan Module
 
-Module `Users` chịu trách nhiệm lưu trữ, quản lý dữ liệu tài khoản và điều phối toàn bộ vòng đời của người dùng trong hệ thống Smart Locker:
+Module `Users` chịu trách nhiệm lưu trữ, quản lý dữ liệu tài khoản và điều phối toàn bộ vòng đời của người dùng trong hệ thống Smart Locker theo mô hình phân quyền chặt chẽ (Multi-tenant Scoped RBAC):
+- Cấp phát tài khoản Ban Quản Lý Tòa Nhà (`POST /users/building-admin`) dành riêng cho `SYSTEM_ADMIN`.
+- Cung cấp quy trình khởi tạo và xét duyệt hồ sơ cư dân (`resident`, `pending-residents`, `approve`, `reject`) dành riêng cho Ban Quản Lý Tòa Nhà (`BUILDING_ADMIN`).
 - Cung cấp thông tin hồ sơ tài khoản cá nhân (`profile`) cho người dùng đang đăng nhập.
-- Cung cấp quy trình xét duyệt hồ sơ cư dân (`pending-residents`, `approve`, `reject`) cho Ban Quản Lý Tòa Nhà.
-- Cung cấp các tác vụ quản trị hệ thống (`findAll`, `findOne`, `remove`) cho Quản trị viên cấp cao (`SYSTEM_ADMIN`).
-- Cung cấp tầng truy xuất dữ liệu (Data Access Layer) qua `UsersService` cho các module `Auth`, `Lockers`, `Boxes`, `Packages`, `Notifications`.
+- Cung cấp các tác vụ tra cứu và quản trị người dùng (`findAll`, `findOne`, `remove`) được cô lập dữ liệu theo từng tòa nhà.
 
 ---
 
@@ -22,7 +22,7 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 | `phone` | `String` | `required: true, unique: true, index: true` | Số điện thoại liên hệ duy nhất (định dạng Việt Nam) |
 | `password` | `String` | `required: true` | Mật khẩu đã được mã hóa một chiều bằng `bcrypt` (10 rounds) |
 | `role` | `String (Enum)` | `enum: Role, default: Role.RESIDENT` | Phân quyền: `SYSTEM_ADMIN`, `BUILDING_ADMIN`, `RESIDENT`, `SHIPPER` |
-| `buildingId` | `Types.ObjectId` | `ref: 'Building', required: false, index: true` | Liên kết đến Tòa nhà cư dân sinh sống hoặc quản lý |
+| `buildingId` | `Types.ObjectId` | `ref: 'Building', required: false, index: true` | Liên kết đến Tòa nhà cư dân sinh sống hoặc BQL quản lý |
 | `apartment` | `String` | `required: false, trim: true` | Số căn hộ của cư dân (ví dụ: `A1204`, `15B`) |
 | `approvalStatus` | `String (Enum)` | `enum: ApprovalStatus, default: PENDING` | Trạng thái hồ sơ: `PENDING`, `ACTIVE`, `REJECTED` |
 | `rejectedReason` | `String` | `required: false, trim: true` | Lý do từ chối hồ sơ nếu trạng thái là `REJECTED` |
@@ -37,62 +37,86 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 
 ## 3. Ma Trận Phân Quyền (RBAC Matrix)
 
-| Chức Năng / API | Endpoint | SYSTEM_ADMIN | BUILDING_ADMIN | RESIDENT | SHIPPER |
-| :--- | :--- | :---: | :---: | :---: | :---: |
-| Xem thông tin cá nhân | `GET /users/profile` | ✅ | ✅ | ✅ | ✅ |
-| Xem danh sách cư dân chờ duyệt | `GET /users/pending-residents` | ✅ | ✅ | ❌ | ❌ |
-| Phê duyệt hồ sơ cư dân | `PATCH /users/:id/approve` | ✅ | ✅ | ❌ | ❌ |
-| Từ chối hồ sơ cư dân | `PATCH /users/:id/reject` | ✅ | ✅ | ❌ | ❌ |
-| Lấy danh sách tất cả tài khoản | `GET /users` | ✅ | ❌ | ❌ | ❌ |
-| Xem chi tiết một tài khoản | `GET /users/:id` | ✅ | ✅ | ❌ | ❌ |
-| Xóa tài khoản người dùng | `DELETE /users/:id` | ✅ | ❌ | ❌ | ❌ |
+| Chức Năng / API | Endpoint | SYSTEM_ADMIN | BUILDING_ADMIN | RESIDENT | SHIPPER | Ghi Chú Phạm Vi |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| Tạo tài khoản Ban Quản Lý | `POST /users/building-admin` | ✅ | ❌ | ❌ | ❌ | Chỉ Super Admin cấp tài khoản BQL |
+| Tạo trực tiếp tài khoản Cư Dân | `POST /users/resident` | ❌ | ✅ | ❌ | ❌ | BQL tạo cư dân cho tòa nhà của mình |
+| Xem thông tin cá nhân | `GET /users/profile` | ✅ | ✅ | ✅ | ✅ | Xem profile chính mình |
+| Xem danh sách cư dân chờ duyệt | `GET /users/pending-residents` | ❌ | ✅ | ❌ | ❌ | BQL xem cư dân PENDING tòa mình |
+| Phê duyệt hồ sơ cư dân | `PATCH /users/:id/approve` | ❌ | ✅ | ❌ | ❌ | BQL duyệt cư dân tòa mình |
+| Từ chối hồ sơ cư dân | `PATCH /users/:id/reject` | ❌ | ✅ | ❌ | ❌ | BQL từ chối cư dân kèm lý do |
+| Lấy danh sách người dùng | `GET /users` | ✅ (Tất cả) | ✅ (Chỉ cư dân tòa mình) | ❌ | ❌ | Tự động phân quyền theo Scope |
+| Xem chi tiết một tài khoản | `GET /users/:id` | ✅ (Tất cả) | ✅ (Chỉ cư dân tòa mình) | ❌ | ❌ | Chặn xem tài khoản tòa khác |
+| Xóa tài khoản người dùng | `DELETE /users/:id` | ✅ (Tất cả) | ✅ (Chỉ cư dân tòa mình) | ❌ | ❌ | Chặn xóa tài khoản tòa khác |
 
 ---
 
 ## 4. Danh Sách Chi Tiết API (API Specifications)
 
-### 4.1. Lấy Thông Tin Cá Nhân Đang Đăng Nhập
-- **Endpoint**: `GET /users/profile`
-- **Quyền truy cập**: `Bearer Token` (Tất cả các Role)
+### 4.1. Khởi Tạo Tài Khoản Ban Quản Lý Tòa Nhà
+- **Endpoint**: `POST /users/building-admin`
+- **Quyền truy cập**: `SYSTEM_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
-- **Response (200 OK)**:
+- **Request Body**:
 ```json
 {
-  "_id": "67890fedcba9876543210fed",
-  "name": "Nguyễn Văn A",
-  "email": "nguyenvana@gmail.com",
+  "name": "Ban Quản Lý Tòa S1.01",
+  "email": "bql.s101@vinhomes.vn",
   "phone": "0912345678",
-  "role": "RESIDENT",
-  "buildingId": "6543210fedcba9876543210f",
-  "apartment": "A1204",
-  "approvalStatus": "ACTIVE",
-  "createdAt": "2026-08-30T09:10:00.000Z",
-  "updatedAt": "2026-08-30T09:15:00.000Z"
+  "password": "AdminPassword@123",
+  "buildingId": "6543210fedcba98765432101"
 }
 ```
+- **Response (201 Created)**: Trả về đối tượng User của Ban Quản Lý (`role: BUILDING_ADMIN`, `approvalStatus: ACTIVE`).
 
 ---
 
-### 4.2. Lấy Danh Sách Cư Dân Chờ Duyệt Thuộc Tòa Nhà
+### 4.2. Khởi Tạo Tài Khoản Cư Dân Trực Tiếp
+- **Endpoint**: `POST /users/resident`
+- **Quyền truy cập**: `BUILDING_ADMIN`
+- **Header**: `Authorization: Bearer <accessToken>`
+- **Request Body**:
+```json
+{
+  "name": "Nguyễn Văn A",
+  "email": "cudan.a1204@vinhomes.vn",
+  "phone": "0987654321",
+  "password": "CudanPassword@123",
+  "apartment": "A1204"
+}
+```
+- **Response (201 Created)**: Trả về đối tượng User Cư Dân (`role: RESIDENT`, `approvalStatus: ACTIVE`, tự động gắn `buildingId` của BQL).
+
+---
+
+### 4.3. Lấy Thông Tin Cá Nhân Đang Đăng Nhập
+- **Endpoint**: `GET /users/profile`
+- **Quyền truy cập**: `Bearer Token` (Tất cả các Role)
+- **Header**: `Authorization: Bearer <accessToken>`
+- **Response (200 OK)**: Trả về thông tin chi tiết đầy đủ của tài khoản đang đăng nhập.
+
+---
+
+### 4.4. Lấy Danh Sách Cư Dân Chờ Duyệt Thuộc Tòa Nhà
 - **Endpoint**: `GET /users/pending-residents`
-- **Quyền truy cập**: `BUILDING_ADMIN`, `SYSTEM_ADMIN`
+- **Quyền truy cập**: `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
 - **Response (200 OK)**: Danh sách mảng các đối tượng cư dân có `approvalStatus: "PENDING"` thuộc tòa nhà của Admin.
 
 ---
 
-### 4.3. Phê Duyệt Hồ Sơ Cư Dân
+### 4.5. Phê Duyệt Hồ Sơ Cư Dân
 - **Endpoint**: `PATCH /users/:id/approve`
-- **Quyền truy cập**: `BUILDING_ADMIN`, `SYSTEM_ADMIN`
+- **Quyền truy cập**: `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
 - **Params**: `id` - Mã ObjectId của Cư Dân cần duyệt
 - **Response (200 OK)**: Đối tượng User đã được cập nhật `approvalStatus: "ACTIVE"`, `approvedBy` và `approvedAt`.
 
 ---
 
-### 4.4. Từ Chối Hồ Sơ Cư Dân
+### 4.6. Từ Chối Hồ Sơ Cư Dân
 - **Endpoint**: `PATCH /users/:id/reject`
-- **Quyền truy cập**: `BUILDING_ADMIN`, `SYSTEM_ADMIN`
+- **Quyền truy cập**: `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
 - **Params**: `id` - Mã ObjectId của Cư Dân cần từ chối
 - **Request Body**:
@@ -105,38 +129,46 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 
 ---
 
-### 4.5. Lấy Danh Sách Tất Cả Người Dùng (Admin Tổng)
+### 4.7. Lấy Danh Sách Người Dùng (Theo Scope)
 - **Endpoint**: `GET /users`
-- **Quyền truy cập**: `SYSTEM_ADMIN`
+- **Quyền truy cập**: `SYSTEM_ADMIN`, `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
-- **Response (200 OK)**: Danh sách toàn bộ tài khoản trong hệ thống (đã loại bỏ `password`).
+- **Hành vi**:
+  - `SYSTEM_ADMIN`: Trả về toàn bộ người dùng trong hệ thống.
+  - `BUILDING_ADMIN`: Chỉ trả về danh sách cư dân thuộc tòa nhà do mình quản lý.
 
 ---
 
-### 4.6. Lấy Chi Tiết Một Người Dùng Theo ID
+### 4.8. Lấy Chi Tiết Một Người Dùng Theo ID (Có Kiểm Tra Tenant)
 - **Endpoint**: `GET /users/:id`
 - **Quyền truy cập**: `SYSTEM_ADMIN`, `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
 - **Params**: `id` - Mã ObjectId của người dùng cần xem
-- **Response (200 OK)**: Thông tin chi tiết của người dùng.
+- **Hành vi**:
+  - `SYSTEM_ADMIN`: Xem bất kỳ tài khoản nào.
+  - `BUILDING_ADMIN`: Chỉ xem được cư dân thuộc tòa nhà mình (nếu xem tài khoản khác sẽ trả về `403 Forbidden`).
 
 ---
 
-### 4.7. Xóa Tài Khoản Người Dùng
+### 4.9. Xóa Tài Khoản Người Dùng (Có Kiểm Tra Tenant)
 - **Endpoint**: `DELETE /users/:id`
-- **Quyền truy cập**: `SYSTEM_ADMIN`
+- **Quyền truy cập**: `SYSTEM_ADMIN`, `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
 - **Params**: `id` - Mã ObjectId của người dùng cần xóa
-- **Response (200 OK)**: Đối tượng User đã bị xóa.
+- **Hành vi**:
+  - `SYSTEM_ADMIN`: Xóa bất kỳ tài khoản nào.
+  - `BUILDING_ADMIN`: Chỉ xóa được cư dân thuộc tòa nhà mình (nếu xóa tài khoản khác sẽ trả về `403 Forbidden`).
 
 ---
 
 ## 5. Tiêu Chuẩn Bảo Mật & Best Practices
 
-1. **Thứ tự định tuyến (Routing Order)**:
+1. **Cô lập dữ liệu Tòa Nhà (Tenant Data Isolation)**:
+   - Tất cả các thao tác của Ban Quản Lý đều được gắn chặt với `req.user.buildingId` trích xuất từ Token ký bảo mật, ngăn chặn tuyệt đối việc can thiệp trái phép vào dữ liệu chung cư khác.
+2. **Thứ tự định tuyến (Routing Order)**:
    - Các route tĩnh (`GET /users/profile`, `GET /users/pending-residents`) luôn được khai báo trước các route động (`GET /users/:id`, `PATCH /users/:id/approve`) để tránh lỗi MongoDB CastError.
-2. **Ẩn mật khẩu tuyệt đối**:
-   - Tất cả các phương thức truy vấn (`findById`, `findAll`, `findPendingResidentsByBuilding`, `updateApprovalStatus`) đều gắn `.select('-password')`.
-3. **Đánh chỉ mục (Indexing)**:
+3. **Ẩn mật khẩu tuyệt đối**:
+   - Tất cả các phương thức truy vấn đều gắn `.select('-password')`.
+4. **Đánh chỉ mục (Indexing)**:
    - `email` và `phone` được đánh unique index.
    - `buildingId` được đánh index để tối ưu hóa truy vấn cư dân theo từng tòa nhà.
