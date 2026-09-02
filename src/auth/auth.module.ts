@@ -10,9 +10,16 @@ import { AuthController } from './auth.controller';
 
 import { RolesGuard } from './guards/roles.guard';
 
+import { BuildingsModule } from '../buildings/buildings.module';
+import { MailModule } from '../mail/mail.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+
 @Module({
   imports: [
     UsersModule,
+    BuildingsModule,
+    MailModule,
+    NotificationsModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -4,6 +4,7 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -13,10 +14,20 @@ import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import { CreateBuildingAdminDto, CreateResidentDto } from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
+import { BuildingsService } from '../buildings/buildings.service';
+import { MailService } from '../mail/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class UsersService {
-  constructor(@InjectModel(User.name) private userModel: Model<User>) {}
+  private readonly logger = new Logger(UsersService.name);
+
+  constructor(
+    @InjectModel(User.name) private userModel: Model<User>,
+    private buildingsService: BuildingsService,
+    private mailService: MailService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   // Tạo mới một tài khoản người dùng vào cơ sở dữ liệu
   async create(userData: Partial<User>): Promise<User> {
@@ -125,6 +136,18 @@ export class UsersService {
       .exec();
   }
 
+  // Lấy danh sách các tài khoản Ban Quản Lý (BUILDING_ADMIN) đang hoạt động của một tòa nhà
+  async findAdminsByBuilding(buildingId: string): Promise<User[]> {
+    return this.userModel
+      .find({
+        buildingId: new Types.ObjectId(buildingId),
+        role: Role.BUILDING_ADMIN,
+        approvalStatus: ApprovalStatus.ACTIVE,
+      })
+      .select('email name')
+      .exec();
+  }
+
   // Cập nhật trạng thái phê duyệt tài khoản cư dân của Ban Quản Lý
   async updateApprovalStatus(
     id: string,
@@ -132,7 +155,7 @@ export class UsersService {
     approvedBy?: string,
     rejectedReason?: string,
   ): Promise<User | null> {
-    return this.userModel
+    const updated = await this.userModel
       .findByIdAndUpdate(
         id,
         {
@@ -149,6 +172,46 @@ export class UsersService {
       )
       .select('-password')
       .exec();
+
+    if (updated && updated.buildingId) {
+      const buildingIdStr = String(updated.buildingId);
+      const isApproved = status === ApprovalStatus.ACTIVE;
+
+      // 1. Phát sự kiện thông báo kết quả phê duyệt qua NotificationsService
+      this.notificationsService.notifyResidentApprovalResult(
+        buildingIdStr,
+        String(updated._id),
+        {
+          status: isApproved ? 'ACTIVE' : 'REJECTED',
+          apartment: updated.apartment,
+          reason: rejectedReason,
+        },
+      );
+
+      // 2. Gửi Email thông báo kết quả chính thức cho Cư Dân
+      if (updated.email) {
+        this.buildingsService
+          .findById(buildingIdStr)
+          .then((building) => {
+            const buildingName = building?.name || 'Tòa Nhà Chung Cư';
+            return this.mailService.sendResidentApprovalResult(
+              updated.email,
+              updated.name,
+              isApproved,
+              updated.apartment || '',
+              buildingName,
+              rejectedReason,
+            );
+          })
+          .catch((mailErr) => {
+            this.logger.error(
+              `Lỗi khi gửi email kết quả duyệt cho cư dân: ${mailErr instanceof Error ? mailErr.message : String(mailErr)}`,
+            );
+          });
+      }
+    }
+
+    return updated;
   }
 
   // Lấy danh sách người dùng theo phạm vi quyền hạn của người gọi

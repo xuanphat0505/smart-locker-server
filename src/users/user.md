@@ -28,10 +28,18 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 | `rejectedReason` | `String` | `required: false, trim: true` | Lý do từ chối hồ sơ nếu trạng thái là `REJECTED` |
 | `approvedAt` | `Date` | `required: false` | Thời điểm Ban Quản Lý phê duyệt hồ sơ |
 | `approvedBy` | `Types.ObjectId` | `ref: 'User', required: false` | Mã định danh của Quản trị viên đã thực hiện phê duyệt |
-| `carrierName` | `String` | `required: false, trim: true` | Tên đơn vị vận chuyển đối với tài xế (ví dụ: `Shopee Xpress`) |
 | `devicePushToken` | `String` | `required: false, trim: true` | Push token từ thiết bị di động (Expo Push Token) để nhận thông báo |
 | `createdAt` | `Date` | `timestamps: true` | Thời gian tạo tài khoản |
 | `updatedAt` | `Date` | `timestamps: true` | Thời gian cập nhật tài khoản gần nhất |
+
+> **Lưu ý:** Hệ thống đã chuyển đổi sang mô hình **Tài Xế Khách Vãng Lai Không Cần Tài Khoản (No-Auth Guest Shipper)**, do đó trường `carrierName` đã được loại bỏ khỏi `User` schema và lưu trực tiếp trên bản ghi `Package`.
+
+### Chỉ Mục Cơ Sở Dữ Liệu (Indexes):
+- `email`: Single Unique Index (Xác thực đăng nhập).
+- `phone`: Single Unique Index (Tra cứu theo số điện thoại).
+- `buildingId`: Single Index (Tra cứu người dùng theo tòa nhà).
+- `{ buildingId: 1, role: 1, approvalStatus: 1 }`: **Compound Index** (Tối ưu truy vấn danh sách cư dân `PENDING` của Ban Quản Lý).
+- `{ buildingId: 1, role: 1 }`: **Compound Index** (Tối ưu tìm kiếm nhanh các tài khoản `BUILDING_ADMIN` để gửi email thông báo).
 
 ---
 

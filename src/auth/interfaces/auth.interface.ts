@@ -22,7 +22,6 @@ export interface SanitizedUser {
   buildingId?: string;
   apartment?: string;
   approvalStatus: ApprovalStatus;
-  carrierName?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -61,6 +60,5 @@ export interface LoginResponse {
     buildingId?: string;
     apartment?: string;
     approvalStatus: ApprovalStatus;
-    carrierName?: string;
   };
 }

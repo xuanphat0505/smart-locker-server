@@ -3,21 +3,23 @@
 > **Tài liệu thiết kế kiến trúc toàn diện cho 2 module cốt lõi:**
 > 1. **Module Lockers & Boxes (Quản Lý Trạm Tủ & Ngăn Tủ)**
 > 2. **Module Packages (Quản Lý Bưu Kiện & Quy Trình Giao - Nhận Hàng)**
+> 
+> *Đã cập nhật đồng bộ 100% với mô hình Shipper Không Cần Tài Khoản (No-Auth Guest Shipper) theo đặc tả `shipper_flow.md`.*
 
 ---
 
 ## 1. Tổng Quan Hệ Thống
 
 Hệ thống giao nhận hàng Smart Locker cung cấp nền tảng tự động hóa việc giao nhận bưu kiện tại các khu đô thị và chung cư:
-- **Shipper (Tài Xế Giao Hàng)**: Tìm kiếm cư dân $\rightarrow$ Chọn kích thước ngăn tủ phù hợp $\rightarrow$ Mở ngăn tủ gửi hàng $\rightarrow$ Kích hoạt mã OTP/QR nhận hàng.
-- **Resident (Cư Dân Nhận Hàng)**: Nhận thông báo tức thì (Push Notification) $\rightarrow$ Xem mã OTP 6 số hoặc quét mã QR tại trạm tủ để nhận hàng 24/7.
+- **Shipper (Tài Xế Giao Hàng - Khách Vãng Lai / No Auth)**: Không cần tài khoản $\rightarrow$ Quét mã QR trạm tủ $\rightarrow$ Tra cứu cư dân theo SĐT $\rightarrow$ Chọn cỡ ngăn $\rightarrow$ Bỏ hàng và đóng cửa tủ $\rightarrow$ Hỗ trợ gửi liên tiếp nhiều đơn trong 1 phiên (Batch Drop-off).
+- **Resident (Cư Dân Nhận Hàng - JWT Auth)**: Nhận thông báo tức thì (Push Notification) $\rightarrow$ Xem mã OTP 6 số hoặc quét mã QR tại trạm tủ để nhận hàng 24/7.
 - **Building Admin & System Admin**: Giám sát tình trạng trạm tủ, tỷ lệ lấp đầy ngăn tủ, quản lý bưu kiện quá hạn lưu kho và hỗ trợ mở tủ khẩn cấp từ xa khi xảy ra sự cố.
 
 ```mermaid
 graph TD
     subgraph "HẠ TẦNG VẬT LÝ (HARDWARE LAYER)"
         LK[Locker: Trạm Tủ Thông Minh]
-        BX[Box: 16-32 Ngăn Tủ Tự Động]
+        BX[Box: 11-24 Ngăn Tủ Tự Động]
         IOT[IoT Controller: ESP32 / Relay Control]
         LK --- BX
         BX --- IOT
@@ -27,18 +29,18 @@ graph TD
         ML[Lockers Service: Quản lý trạm & ngăn tủ]
         MP[Packages Service: Xử lý Giao & Nhận]
         MN[Notifications Service: Gửi Push Token]
-        MA[Auth & Users: Phân quyền RBAC]
+        MA[Auth & Users: Phân quyền Cư Dân & BQL]
     end
 
     subgraph "ỨNG DỤNG NGƯỜI DÙNG (CLIENT LAYER)"
-        SP[Mobile App Shipper: Gửi hàng]
-        RD[Mobile App Resident: Nhận mã & Quét QR]
+        SP[Guest Shipper: Quét QR Tủ gửi hàng nhanh - Không cần Account]
+        RD[Mobile App Resident: Nhận mã OTP & Quét QR]
         SCR[Màn hình cảm ứng tại Tủ: Nhập OTP mở cửa]
     end
 
-    SP -->|POST /packages/drop-off| MP
-    RD -->|GET /packages/my-packages| MP
-    SCR -->|POST /packages/pickup/otp| MP
+    SP -->|POST /packages/drop-off (Public)| MP
+    RD -->|GET /packages/my-packages (JWT)| MP
+    SCR -->|POST /packages/pickup/otp (Public)| MP
     MP --> ML
     MP --> MN
     ML --> IOT
@@ -56,7 +58,7 @@ graph TD
 | `name` | `String` | `required, trim` | Tên hiển thị (ví dụ: *"Trạm Tủ Sảnh Chính Tòa S1.01"*) |
 | `code` | `String` | `required, unique, uppercase` | Mã trạm tủ duy nhất (ví dụ: *"LK-S101-01"*) |
 | `buildingId` | `Types.ObjectId` | `ref: 'Building', required, index` | Tòa nhà nơi đặt trạm tủ |
-| `totalBoxes` | `Number` | `required, min: 1` | Tổng số lượng ngăn tủ con (ví dụ: `16`) |
+| `totalBoxes` | `Number` | `required, min: 1` | Tổng số lượng ngăn tủ con (ví dụ: `16` hoặc `11`) |
 | `macAddress` | `String` | `required, unique, trim` | Địa chỉ MAC phần cứng của bộ điều khiển IoT |
 | `status` | `String (Enum)` | `enum: LockerStatus, default: ONLINE` | Trạng thái trạm tủ: `ONLINE`, `OFFLINE`, `MAINTENANCE` |
 | `locationDescription` | `String` | `optional, trim` | Vị trí đặt tủ (ví dụ: *"Cạnh quầy lễ tân sảnh A tầng 1"*) |
@@ -86,9 +88,9 @@ export enum LockerStatus {
 
 ```typescript
 export enum BoxSize {
-  SMALL = 'SMALL',       // Phù hợp tài liệu, mỹ phẩm, phụ kiện (10x40x45 cm)
-  MEDIUM = 'MEDIUM',     // Phù hợp quần áo, giày dép, hộp vừa (20x40x45 cm)
-  LARGE = 'LARGE',       // Phù hợp đồ điện tử, kiện hàng lớn (35x40x45 cm)
+  SMALL = 'SMALL',       // Tài liệu, mỹ phẩm, phụ kiện (10x40x45 cm)
+  MEDIUM = 'MEDIUM',     // Quần áo, giày dép, hộp vừa (20x40x45 cm)
+  LARGE = 'LARGE',       // Đồ điện tử, kiện hàng lớn (35x40x45 cm)
 }
 
 export enum BoxStatus {
@@ -107,6 +109,8 @@ export enum DoorStatus {
 
 ### 2.3. Thực thể `Package` (`packages` collection)
 
+> **Cập nhật cốt lõi:** Shipper không cần tạo tài khoản, do đó `shipperId` là tùy chọn (`optional`), hệ thống định danh Shipper bằng `shipperPhone` và `carrierName` bắt buộc.
+
 | Thuộc Tính | Kiểu Dữ Liệu | Ràng Buộc | Mô Tả & Ý Nghĩa Nghiệp Vụ |
 | :--- | :--- | :--- | :--- |
 | `_id` | `Types.ObjectId` | Primary Key | Mã định danh bưu kiện |
@@ -114,11 +118,14 @@ export enum DoorStatus {
 | `lockerId` | `Types.ObjectId` | `ref: 'Locker', required, index` | Trạm tủ đang lưu giữ bưu kiện |
 | `boxId` | `Types.ObjectId` | `ref: 'Box', required` | Ngăn tủ cụ thể chứa bưu kiện |
 | `buildingId` | `Types.ObjectId` | `ref: 'Building', required, index` | Tòa nhà của cư dân nhận hàng |
-| `shipperId` | `Types.ObjectId` | `ref: 'User', required, index` | Tài xế giao hàng thực hiện gửi đơn |
 | `residentId` | `Types.ObjectId` | `ref: 'User', required, index` | Cư dân thụ hưởng bưu kiện |
-| `receiverPhone` | `String` | `required, trim` | Số điện thoại người nhận để tra cứu |
-| `receiverName` | `String` | `required, trim` | Tên người nhận |
+| `receiverPhone` | `String` | `required, trim` | Số điện thoại cư dân nhận hàng |
+| `receiverName` | `String` | `required, trim` | Tên cư dân nhận hàng |
 | `apartment` | `String` | `required, trim` | Số căn hộ người nhận (ví dụ: *"A1204"*) |
+| `shipperPhone` | `String` | `required, index, trim` | Số điện thoại tài xế giao hàng để đối soát |
+| `shipperName` | `String` | `optional, trim` | Tên tài xế giao hàng |
+| `carrierName` | `String` | `required, trim` | Hãng giao vận (Shopee Xpress, GHTK, GHN, ViettelPost...) |
+| `shipperId` | `Types.ObjectId` | `ref: 'User', optional, index` | Mã tài khoản nếu là shipper nội bộ liên kết |
 | `pinCode` | `String` | `required, index` | Mã OTP nhận hàng gồm 6 số ngẫu nhiên |
 | `qrCodeToken` | `String` | `required, unique` | Token bí mật phục vụ tạo mã QR quét mở tủ |
 | `status` | `String (Enum)` | `enum: PackageStatus, default: WAITING_FOR_PICKUP` | Trạng thái bưu kiện |
@@ -132,7 +139,7 @@ export enum PackageStatus {
   WAITING_FOR_PICKUP = 'WAITING_FOR_PICKUP', // Đang chờ cư dân đến lấy
   PICKED_UP = 'PICKED_UP',                   // Cư dân đã lấy hàng thành công
   OVERDUE = 'OVERDUE',                       // Quá hạn lưu kho (sau 48h)
-  RETURNED = 'RETURNED',                     // Shipper/BQL đã thu hồi bưu kiện
+  RETURNED = 'RETURNED',                     // Đã hoàn trả lại cho Shipper/BQL
 }
 ```
 
@@ -147,7 +154,7 @@ export enum PackageStatus {
 | `boxNumber` | `Number` | `required` | Số ngăn tủ bị tác động |
 | `packageId` | `Types.ObjectId` | `ref: 'Package', optional` | Bưu kiện liên quan |
 | `action` | `String (Enum)` | `enum: LockerAction` | Hành động: `DROP_OFF`, `PICKUP_OTP`, `PICKUP_QR`, `REMOTE_OPEN` |
-| `performedBy` | `Types.ObjectId` | `ref: 'User', optional` | Người thực hiện hành động |
+| `performedBy` | `String` | `required` | Số điện thoại hoặc User ID người thực hiện |
 | `status` | `String` | `SUCCESS` hoặc `FAILED` | Kết quả thực thi |
 | `createdAt` | `Date` | `timestamps: true` | Thời điểm thực hiện |
 
@@ -155,30 +162,34 @@ export enum PackageStatus {
 
 ## 3. Quy Trình Nghiệp Vụ & Sequence Diagrams
 
-### 3.1. Quy Trình Shipper Gửi Hàng (Drop-off Flow)
+### 3.1. Quy Trình Shipper Gửi Hàng (Drop-off Flow - No Auth)
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Shipper as Shipper (Mobile App)
+    actor Shipper as Tài Xế Giao Hàng
     participant Backend as NestJS Server
     participant DB as MongoDB
-    actor Resident as Cư Dân (Mobile App)
+    actor Resident as Cư Dân Nhận Hàng
 
-    Shipper->>Backend: 1. GET /lockers/available-boxes?buildingId=...&size=MEDIUM
-    Backend->>DB: Truy vấn Box có status=AVAILABLE & size=MEDIUM
-    DB-->>Backend: Danh sách các Box trống phù hợp
-    Backend-->>Shipper: Trả về danh sách Box khả dụng
+    Shipper->>Backend: 1. GET /lockers/:code/boxes
+    Backend->>DB: Lấy danh sách Box của trạm tủ
+    DB-->>Backend: Sơ đồ ngăn tủ & trạng thái (AVAILABLE, OCCUPIED)
+    Backend-->>Shipper: Trả về sơ đồ hiển thị 2D
 
-    Shipper->>Backend: 2. POST /packages/drop-off { receiverPhone, apartment, buildingId, boxId, trackingNumber }
-    Backend->>DB: Kiểm tra tài khoản Cư Dân (active & đúng tòa nhà)
+    Shipper->>Backend: 2. GET /lockers/lookup-receiver?phone=0912345678&lockerCode=LK-S101-01
+    Backend->>DB: Kiểm tra Cư Dân có active và thuộc tòa nhà hay không
+    DB-->>Backend: Cư dân hợp lệ (Nguyễn Văn A - Căn A1204)
+    Backend-->>Shipper: Trả về thông tin căn hộ đối soát
+
+    Shipper->>Backend: 3. POST /packages/drop-off { lockerCode, receiverPhone, shipperPhone, carrierName, boxNumber, boxSize, trackingNumber }
     Backend->>DB: Khóa Box (status = OCCUPIED)
     Backend->>Backend: Sinh OTP 6 chữ số ngẫu nhiên + QR Token bí mật
     Backend->>DB: Tạo Package (status = WAITING_FOR_PICKUP, expiredAt = now + 48h)
     Backend->>DB: Ghi nhật ký LockerLog (action = DROP_OFF)
     
-    Backend->>Resident: 3. Gửi Push Notification qua Expo Push Service: "Bưu kiện mới tại Ngăn #5 - OTP: 384920"
-    Backend-->>Shipper: 201 Created { packageId, boxNumber: 5, message: "Cửa ngăn tủ số 5 đã mở, vui lòng bỏ hàng và đóng cửa" }
+    Backend->>Resident: 4. Bắn Push Notification: "Bưu kiện mới tại Ngăn #5 - OTP: 384920"
+    Backend-->>Shipper: 201 Created { packageId, boxNumber: 5, action: "OPEN_DOOR", message: "Cửa ngăn tủ số 5 đã mở" }
 ```
 
 ---
@@ -202,7 +213,7 @@ sequenceDiagram
         Backend->>DB: Giải phóng Box (status = AVAILABLE, currentPackageId = null)
         Backend->>DB: Ghi nhật ký LockerLog (action = PICKUP_OTP)
         Backend-->>LockerKiosk: 200 OK { boxNumber: 5, action: "OPEN_DOOR", message: "Mở ngăn số 5 thành công" }
-        Note over LockerKiosk: Bộ điều khiển bật mở chốt khóa ngăn số 5.<br/>Cư dân lấy hàng và đẩy đóng cửa tủ.
+        Note over LockerKiosk: Bộ điều khiển bật mở chốt khóa ngăn số 5.<br/>Cư dân lấy hàng và đóng cửa tủ.
     else Mã OTP sai hoặc đã hết hạn
         Backend-->>LockerKiosk: 400 Bad Request { message: "Mã OTP không chính xác hoặc đơn hàng đã được lấy" }
     end
@@ -216,7 +227,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     actor Resident as Cư Dân (Mobile App)
-    participant LockerCamera as Camera / Đầu Đọc QR Tại Tủ
+    participant LockerCamera as Đầu Đọc QR Tại Tủ
     participant Backend as NestJS Server
     participant DB as MongoDB
 
@@ -226,42 +237,46 @@ sequenceDiagram
     Backend->>DB: Xác thực qrCodeToken & Package
     Backend->>DB: Cập nhật Package: PICKED_UP & Box: AVAILABLE
     Backend-->>LockerCamera: 200 OK { boxNumber: 5, action: "OPEN_DOOR" }
-    Note over LockerCamera: Cửa tủ số 5 tự động bật mở
 ```
 
 ---
 
 ## 4. Ma Trận Phân Quyền API (RBAC Matrix)
 
-| Chức Năng | Method & Endpoint | Phân Quyền (RBAC) | Mô Tả |
+| Chức Năng | Method & Endpoint | Phân Quyền (RBAC) | Mô Tả Nghiệp Vụ |
 | :--- | :--- | :---: | :--- |
-| **Tìm ngăn tủ trống** | `GET /lockers/available-boxes` | `SHIPPER` | Lấy danh sách Box trống theo kích thước để gửi |
-| **Shipper gửi hàng** | `POST /packages/drop-off` | `SHIPPER` | Khởi tạo đơn gửi, mở cửa tủ, sinh OTP/QR |
-| **Lịch sử gửi hàng** | `GET /packages/shipper/history` | `SHIPPER` | Xem danh sách các đơn shipper đã giao |
-| **Bưu kiện của tôi** | `GET /packages/my-packages` | `RESIDENT` | Cư dân xem các đơn đang chờ nhận và lịch sử |
-| **Lấy mã QR nhận hàng** | `GET /packages/:id/qr-code` | `RESIDENT` | Sinh mã QR động hiển thị trên điện thoại |
-| **Nhập OTP mở tủ** | `POST /packages/pickup/otp` | **Public / Hardware** | Nhập OTP tại màn hình tủ để lấy hàng |
-| **Quét QR mở tủ** | `POST /packages/pickup/qr` | **Public / Hardware** | Quét QR tại đầu đọc camera tủ |
-| **Danh sách trạm tủ** | `GET /lockers` | `SYSTEM_ADMIN`, `BUILDING_ADMIN` | Xem danh sách trạm tủ và trạng thái từng ngăn |
-| **Tạo trạm tủ mới** | `POST /lockers` | `SYSTEM_ADMIN` | Thêm trạm tủ và tự động sinh 16-24 ngăn tủ con |
-| **Mở tủ khẩn cấp từ xa**| `POST /lockers/:id/remote-open`| `SYSTEM_ADMIN`, `BUILDING_ADMIN` | Mở khẩn cấp khi kẹt cửa hoặc xử lý sự cố |
-| **Giám sát bưu kiện tòa**| `GET /packages/building-packages`| `BUILDING_ADMIN` | BQL theo dõi các đơn hàng đang lưu tại sảnh |
+| **Thông tin trạm tủ** | `GET /lockers/:code` | **Public** | Lấy thông tin trạm tủ khi quét QR trên thân tủ |
+| **Sơ đồ các ngăn tủ** | `GET /lockers/:code/boxes` | **Public** | Lấy danh sách toàn bộ các ngăn tủ (trống/bận, cỡ S/M/L) |
+| **Tra cứu Cư Dân** | `GET /lockers/lookup-receiver` | **Public** | Tra cứu tên & căn hộ theo SĐT trước khi mở tủ gửi |
+| **Shipper gửi hàng** | `POST /packages/drop-off` | **Public (Guest)** | Gửi hàng vào tủ, mở chốt điện từ, sinh OTP cho cư dân |
+| **Bưu kiện của tôi** | `GET /packages/my-packages` | `RESIDENT` *(JWT)* | Cư dân xem các đơn đang chờ nhận và lịch sử nhận |
+| **Chi tiết bưu kiện** | `GET /packages/:id` | `RESIDENT` *(JWT)* | Xem chi tiết kiện hàng, vị trí ngăn, mã OTP, hạn lấy |
+| **Lấy QR Token nhận**| `GET /packages/:id/qr-token` | `RESIDENT` *(JWT)* | Lấy mã QR động dùng để quét trước camera tủ |
+| **Nhập OTP mở tủ** | `POST /packages/pickup/otp` | **Public / Kiosk Tủ**| Nhập OTP 6 số tại màn hình tủ để mở khóa lấy đồ |
+| **Quét QR mở tủ** | `POST /packages/pickup/qr` | **Public / Kiosk Tủ**| Quét QR Token trước camera tủ để mở khóa lấy đồ |
+| **Danh sách trạm tủ** | `GET /lockers` | `SYSTEM_ADMIN`, `BUILDING_ADMIN` | Quản trị viên xem mạng lưới trạm tủ toàn hệ thống |
+| **Tạo trạm tủ mới** | `POST /lockers` | `SYSTEM_ADMIN` | Thêm trạm tủ mới (auto sinh các ngăn tủ con) |
+| **Mở tủ khẩn cấp từ xa**| `POST /lockers/:id/remote-open`| `BUILDING_ADMIN` | BQL mở khẩn cấp khi kẹt cửa hoặc xử lý sự cố |
+| **Bưu kiện tòa nhà** | `GET /packages/building-packages`| `BUILDING_ADMIN` | BQL giám sát các bưu kiện đang lưu tại sảnh |
 
 ---
 
 ## 5. Đặc Tả Chi Tiết API (API Specifications)
 
-### 5.1. `POST /packages/drop-off` (Shipper Gửi Hàng Vào Tủ)
-- **Header**: `Authorization: Bearer <SHIPPER_TOKEN>`
+### 5.1. `POST /packages/drop-off` (Tài Xế Gửi Hàng Vào Tủ - Không Cần Token)
+- **Quyền truy cập**: Public
 - **Request Body**:
 ```json
 {
-  "trackingNumber": "SPX839201948",
-  "receiverPhone": "0987654321",
-  "buildingId": "6a95091f1e23b42475f441d3",
-  "apartment": "A1204",
+  "lockerCode": "LK-S101-01",
+  "receiverPhone": "0912345678",
+  "shipperPhone": "0987654321",
+  "shipperName": "Trần Giao Hàng",
+  "carrierName": "Shopee Xpress",
+  "boxNumber": 4,
   "boxSize": "MEDIUM",
-  "note": "Hàng điện tử dễ vỡ"
+  "trackingNumber": "SPX839201948",
+  "note": "Hàng quần áo đóng hộp"
 }
 ```
 - **Response (201 Created)**:
@@ -272,25 +287,67 @@ sequenceDiagram
     "_id": "6b1234567890abcdef123456",
     "trackingNumber": "SPX839201948",
     "receiverName": "Nguyễn Văn Cư Dân",
-    "receiverPhone": "0987654321",
+    "receiverPhone": "0912345678",
     "apartment": "A1204",
-    "boxNumber": 5,
+    "boxNumber": 4,
     "boxSize": "MEDIUM",
     "status": "WAITING_FOR_PICKUP",
-    "droppedOffAt": "2026-08-31T08:00:00.000Z",
-    "expiredAt": "2026-09-02T08:00:00.000Z"
+    "droppedOffAt": "2026-09-01T08:00:00.000Z",
+    "expiredAt": "2026-09-03T08:00:00.000Z"
   },
   "action": {
     "command": "OPEN_DOOR",
-    "boxNumber": 5
+    "boxNumber": 4
   }
 }
 ```
 
 ---
 
-### 5.2. `POST /packages/pickup/otp` (Nhập OTP Tại Màn Hình Tủ)
-- **Header**: Không yêu cầu Token người dùng (gọi từ Kiosk Tủ với API Key của Tủ)
+### 5.2. `GET /lockers/lookup-receiver` (Tra Cứu Cư Dân Hợp Lệ Trước Khi Mở Tủ)
+- **Quyền truy cập**: Public
+- **Query Params**: `phone=0912345678&lockerCode=LK-S101-01`
+- **Response (200 OK)**:
+```json
+{
+  "found": true,
+  "receiverName": "Nguyễn Văn A",
+  "apartment": "A1204",
+  "buildingName": "Tòa S1.01",
+  "buildingId": "6a95091f1e23b42475f441d3"
+}
+```
+- **Response Khi Không Thuộc Tòa Nhà (404 Not Found)**:
+```json
+{
+  "statusCode": 404,
+  "message": "Số điện thoại này chưa được đăng ký làm cư dân của tòa nhà"
+}
+```
+
+---
+
+### 5.3. `GET /lockers/:code/boxes` (Lấy Sơ Đồ Ngăn Tủ Hiển Thị Cho Shipper)
+- **Quyền truy cập**: Public
+- **Response (200 OK)**:
+```json
+{
+  "lockerCode": "LK-S101-01",
+  "name": "Trạm Tủ Sảnh Chính Tòa S1.01",
+  "totalBoxes": 11,
+  "availableCount": 7,
+  "boxes": [
+    { "boxNumber": 1, "size": "SMALL", "status": "AVAILABLE", "doorStatus": "CLOSED" },
+    { "boxNumber": 2, "size": "SMALL", "status": "OCCUPIED", "doorStatus": "CLOSED" },
+    { "boxNumber": 4, "size": "MEDIUM", "status": "AVAILABLE", "doorStatus": "CLOSED" }
+  ]
+}
+```
+
+---
+
+### 5.4. `POST /packages/pickup/otp` (Nhập OTP Tại Màn Hình Tủ Để Nhận Hàng)
+- **Quyền truy cập**: Public / Kiosk Tủ
 - **Request Body**:
 ```json
 {
@@ -301,21 +358,21 @@ sequenceDiagram
 - **Response (200 OK)**:
 ```json
 {
-  "message": "Xác thực mã OTP thành công. Cửa ngăn tủ số 5 đã mở!",
+  "message": "Xác thực mã OTP thành công. Cửa ngăn tủ số 4 đã mở!",
   "package": {
     "_id": "6b1234567890abcdef123456",
     "trackingNumber": "SPX839201948",
     "status": "PICKED_UP",
-    "pickedUpAt": "2026-08-31T10:30:00.000Z"
+    "pickedUpAt": "2026-09-01T10:30:00.000Z"
   },
-  "boxNumber": 5,
+  "boxNumber": 4,
   "action": "OPEN_DOOR"
 }
 ```
 
 ---
 
-### 5.3. `GET /packages/my-packages` (Cư Dân Xem Bưu Kiện Của Mình)
+### 5.5. `GET /packages/my-packages` (Cư Dân Xem Bưu Kiện Của Mình)
 - **Header**: `Authorization: Bearer <RESIDENT_TOKEN>`
 - **Response (200 OK)**:
 ```json
@@ -324,38 +381,48 @@ sequenceDiagram
     "_id": "6b1234567890abcdef123456",
     "trackingNumber": "SPX839201948",
     "lockerName": "Trạm Tủ Sảnh Chính Tòa S1.01",
-    "boxNumber": 5,
+    "lockerCode": "LK-S101-01",
+    "boxNumber": 4,
+    "boxSize": "MEDIUM",
     "pinCode": "384920",
     "status": "WAITING_FOR_PICKUP",
-    "droppedOffAt": "2026-08-31T08:00:00.000Z",
-    "expiredAt": "2026-09-02T08:00:00.000Z",
-    "shipperName": "Trần Giao Hàng (Shopee Xpress)"
+    "carrierName": "Shopee Xpress",
+    "droppedOffAt": "2026-09-01T08:00:00.000Z",
+    "expiredAt": "2026-09-03T08:00:00.000Z"
   }
 ]
 ```
 
 ---
 
-## 6. Lộ Trình Triển Khai (Implementation Roadmap)
+## 6. Lộ Trình Triển Khai Backend (NestJS Roadmap)
 
 ```text
-GIAI ĐOẠN 1: MODULE LOCKERS & BOXES
-├── 1.1 Tạo Enums (LockerStatus, BoxStatus, BoxSize, DoorStatus)
-├── 1.2 Tạo Schemas (LockerSchema, BoxSchema)
-├── 1.3 Tạo LockersService (Khởi tạo trạm tủ kèm auto-generate 16 boxes)
-├── 1.4 Tạo LockersController & Swagger Docs
-└── 1.5 Tích hợp LockersModule vào AppModule
+GIAI ĐOẠN 1: MODULE LOCKERS & BOXES (HẠ TẦNG TRẠM TỦ)
+├── 1.1 Khởi tạo Enums: LockerStatus, BoxStatus, BoxSize, DoorStatus
+├── 1.2 Khởi tạo Schemas Mongoose: LockerSchema, BoxSchema
+├── 1.3 Xây dựng LockersService:
+│   ├── Khởi tạo trạm tủ kèm auto-generate các ngăn con
+│   ├── GET /lockers/:code (Thông tin trạm tủ)
+│   ├── GET /lockers/:code/boxes (Sơ đồ ngăn tủ thời gian thực)
+│   └── GET /lockers/lookup-receiver (Tra cứu xác minh SĐT Cư Dân)
+├── 1.4 Khởi tạo LockersController & Swagger Docs
+└── 1.5 Cập nhật seed.ts: Nạp sẵn trạm LK-S101-01 (Vinhomes) & LK-TECCO-01 (Tecco Linh Đông)
 
-GIAI ĐOẠN 2: MODULE PACKAGES & GIAO NHẬN
-├── 2.1 Tạo Enums (PackageStatus, LockerAction)
-├── 2.2 Tạo Schemas (PackageSchema, LockerLogSchema)
-├── 2.3 Tạo PackagesService (Xử lý drop-off, pickup OTP/QR, tự động đổi trạng thái Box)
-├── 2.4 Xây dựng module Notification gửi Push Token qua Expo API
-├── 2.5 Tạo PackagesController & Swagger Docs
-└── 2.6 Tích hợp Cronjob quét đơn hàng quá hạn (OVERDUE sau 48h)
+GIAI ĐOẠN 2: MODULE PACKAGES & GIAO NHẬN (CORE BUSINESS LOGIC)
+├── 2.1 Khởi tạo Enums: PackageStatus, LockerAction
+├── 2.2 Khởi tạo Schemas Mongoose: PackageSchema (hỗ trợ shipperPhone/carrierName), LockerLogSchema
+├── 2.3 Xây dựng PackagesService:
+│   ├── POST /packages/drop-off (No-Auth Guest Shipper gửi hàng, khóa Box, sinh OTP 6 số)
+│   ├── GET /packages/my-packages (Cư Dân xem danh sách đơn đang chờ)
+│   ├── GET /packages/:id (Chi tiết kiện hàng)
+│   ├── POST /packages/pickup/otp (Nhập OTP mở tủ, đổi Box thành AVAILABLE)
+│   └── POST /packages/pickup/qr (Quét QR mở tủ)
+├── 2.4 Xây dựng module Notifications (Tích hợp Expo Push Service gửi thông báo tới app Cư Dân)
+└── 2.5 Cronjob tự động chuyển trạng thái đơn hàng quá hạn (OVERDUE sau 48h)
 
-GIAI ĐOẠN 3: TÍCH HỢP MOBILE APP
-├── 3.1 Màn hình Shipper: Chọn Tòa Nhà -> Nhập SĐT Căn Hộ -> Chọn Box Size -> Bấm Gửi
-├── 3.2 Màn hình Resident: Danh sách kiện hàng chờ lấy, hiển thị OTP to rõ + QR Code
-└── 3.3 Nhận thông báo Push Notification khi có hàng mới
+GIAI ĐOẠN 3: TÍCH HỢP TOÀN DIỆN MOBILE APP & KIOSK
+├── 3.1 Nối API Mobile Shipper: drop-off/scan -> locker/select -> locker/interaction -> drop-off/summary
+├── 3.2 Nối API Mobile Resident: Trang chủ (readyShipment) -> Bưu phẩm -> Mở tủ OTP
+└── 3.3 Kiểm thử E2E trọn vẹn luồng từ khi Shipper bỏ đồ đến khi Cư Dân nhận hàng
 ```
