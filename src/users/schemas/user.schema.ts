@@ -53,10 +53,6 @@ export class User extends Document {
   })
   approvedBy?: Types.ObjectId;
 
-  // Dành riêng cho Tài Xế Giao Hàng (Shipper)
-  @Prop({ required: false, trim: true })
-  carrierName?: string;
-
   // Token nhận thông báo đẩy qua Expo Go
   @Prop({ required: false, trim: true })
   devicePushToken?: string;
@@ -67,3 +63,9 @@ export class User extends Document {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+
+// Chỉ mục kết hợp tối ưu hóa truy vấn lọc cư dân chờ duyệt theo tòa nhà
+UserSchema.index({ buildingId: 1, role: 1, approvalStatus: 1 });
+
+// Chỉ mục kết hợp tìm nhanh các tài khoản Ban Quản Lý của tòa nhà
+UserSchema.index({ buildingId: 1, role: 1 });

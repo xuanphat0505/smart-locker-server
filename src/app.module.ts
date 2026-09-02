@@ -9,6 +9,9 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { BuildingsModule } from './buildings/buildings.module';
 
+import { MailModule } from './mail/mail.module';
+import { NotificationsModule } from './notifications/notifications.module';
+
 @Module({
   imports: [
     // Load cấu hình từ file .env
@@ -20,6 +23,8 @@ import { BuildingsModule } from './buildings/buildings.module';
     UsersModule,
     AuthModule,
     BuildingsModule,
+    MailModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

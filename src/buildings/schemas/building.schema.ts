@@ -28,6 +28,10 @@ export class Building extends Document {
   @Prop({ required: false, trim: true })
   hotline?: string;
 
+  // Email chính thức của tòa nhà
+  @Prop({ required: false, trim: true })
+  managementEmail?: string;
+
   @Prop({
     type: String,
     enum: BuildingStatus,

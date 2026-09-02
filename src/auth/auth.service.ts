@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
@@ -23,13 +24,21 @@ import {
 import { Role } from './enums/role.enum';
 import { User } from '../users/schemas/user.schema';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
+import { BuildingsService } from '../buildings/buildings.service';
+import { MailService } from '../mail/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private buildingsService: BuildingsService,
+    private mailService: MailService,
+    private notificationsService: NotificationsService,
   ) {}
 
   // Xác thực thông tin người dùng từ email và mật khẩu rồi trả về thông tin user đã làm sạch
@@ -119,7 +128,6 @@ export class AuthService {
         buildingId: user.buildingId,
         apartment: user.apartment,
         approvalStatus: user.approvalStatus,
-        carrierName: user.carrierName,
       },
     };
   }
@@ -154,6 +162,64 @@ export class AuthService {
     });
 
     const sanitized = this.sanitizeUser(newUser);
+
+    // 1. Phát thông báo điều phối tức thì qua NotificationsService
+    this.notificationsService.notifyNewResident(dto.buildingId, {
+      id: String(newUser._id),
+      name: newUser.name,
+      phone: newUser.phone,
+      email: newUser.email,
+      apartment: newUser.apartment,
+      buildingId: dto.buildingId,
+      createdAt: new Date(),
+    });
+
+    // 2. Gửi email thông báo cho Ban Quản Lý (Cơ chế Fallback 3 Tầng thông minh)
+    Promise.all([
+      this.buildingsService.findById(dto.buildingId),
+      this.usersService.findAdminsByBuilding(dto.buildingId),
+    ])
+      .then(([building, admins]) => {
+        const buildingName = building?.name || 'Tòa Nhà Chung Cư';
+
+        // Tầng 1: Lấy danh sách email của các tài khoản BUILDING_ADMIN đang active thuộc tòa nhà
+        const activeAdminEmails = admins
+          .map((admin) => admin.email)
+          .filter(Boolean);
+
+        let targetEmails: string[] = [];
+        if (activeAdminEmails.length > 0) {
+          targetEmails = activeAdminEmails;
+        } else if (building?.managementEmail) {
+          // Tầng 2: Fallback về email chính thức của Tòa Nhà (managementEmail)
+          targetEmails = [building.managementEmail];
+        }
+
+        // Nếu không có cả BUILDING_ADMIN lẫn managementEmail thì bỏ qua không gửi email
+        if (targetEmails.length === 0) {
+          this.logger.warn(
+            `Tòa nhà ${buildingName} (${dto.buildingId}) chưa có tài khoản BUILDING_ADMIN hoặc managementEmail. Bỏ qua gửi email thông báo.`,
+          );
+          return false;
+        }
+
+        return this.mailService.sendNewResidentNotification(
+          targetEmails,
+          {
+            name: newUser.name,
+            phone: newUser.phone,
+            email: newUser.email,
+            apartment: newUser.apartment,
+          },
+          buildingName,
+        );
+      })
+      .catch((mailError) => {
+        this.logger.error(
+          `Lỗi khi gửi email thông báo Ban Quản Lý: ${mailError instanceof Error ? mailError.message : String(mailError)}`,
+        );
+      });
+
     return {
       message: 'Đăng ký tài khoản cư dân thành công',
       user: sanitized,
@@ -184,7 +250,6 @@ export class AuthService {
       phone: dto.phone.trim(),
       password: hashedPassword,
       role: Role.SHIPPER,
-      carrierName: dto.carrierName.trim(),
       approvalStatus: ApprovalStatus.ACTIVE,
     });
 
