@@ -60,8 +60,10 @@ graph TD
 | `buildingId` | `Types.ObjectId` | `ref: 'Building', required, index` | Tòa nhà nơi đặt trạm tủ |
 | `totalBoxes` | `Number` | `required, min: 1` | Tổng số lượng ngăn tủ con (ví dụ: `16` hoặc `11`) |
 | `macAddress` | `String` | `required, unique, trim` | Địa chỉ MAC phần cứng của bộ điều khiển IoT |
+| `apiKey` | `String` | `required, select: false` | Khóa bí mật dùng để chứng thực request từ bộ điều khiển IoT Kiosk/ESP32 (chống giả mạo MAC) |
 | `status` | `String (Enum)` | `enum: LockerStatus, default: ONLINE` | Trạng thái trạm tủ: `ONLINE`, `OFFLINE`, `MAINTENANCE` |
 | `locationDescription` | `String` | `optional, trim` | Vị trí đặt tủ (ví dụ: *"Cạnh quầy lễ tân sảnh A tầng 1"*) |
+| `coordinates` | `Object` | `{ latitude: Number, longitude: Number }, optional` | Tọa độ địa lý GPS độc lập phục vụ định vị và tính khoảng cách |
 | `createdAt` / `updatedAt` | `Date` | `timestamps: true` | Dấu thời gian tạo và cập nhật |
 
 ```typescript
@@ -83,7 +85,8 @@ export enum LockerStatus {
 | `boxNumber` | `Number` | `required, min: 1` | Số thứ tự in trên cánh cửa ngăn tủ (ví dụ: 1, 2, 3...) |
 | `size` | `String (Enum)` | `enum: BoxSize, default: MEDIUM` | Kích thước ngăn: `SMALL`, `MEDIUM`, `LARGE` |
 | `status` | `String (Enum)` | `enum: BoxStatus, default: AVAILABLE` | Tình trạng: `AVAILABLE` (Trống), `OCCUPIED` (Có hàng), `MAINTENANCE` (Lỗi) |
-| `doorStatus` | `String (Enum)` | `enum: DoorStatus, default: CLOSED` | Trạng thái cửa: `CLOSED` (Đóng), `OPEN` (Mở) |
+| `doorStatus` | `String (Enum)` | `enum: DoorStatus, default: CLOSED` | Trạng thái cửa (Reed Switch): `CLOSED` (Đóng), `OPEN` (Mở) |
+| `hasItem` | `Boolean` | `default: false` | Trạng thái cảm biến quang học hồng ngoại (IR Sensor) phát hiện có vật thể trong lòng ngăn |
 | `currentPackageId`| `Types.ObjectId` | `ref: 'Package', optional` | Bưu kiện đang được lưu trữ bên trong ngăn tủ |
 
 ```typescript
@@ -126,8 +129,10 @@ export enum DoorStatus {
 | `shipperName` | `String` | `optional, trim` | Tên tài xế giao hàng |
 | `carrierName` | `String` | `required, trim` | Hãng giao vận (Shopee Xpress, GHTK, GHN, ViettelPost...) |
 | `shipperId` | `Types.ObjectId` | `ref: 'User', optional, index` | Mã tài khoản nếu là shipper nội bộ liên kết |
-| `pinCode` | `String` | `required, index` | Mã OTP nhận hàng gồm 6 số ngẫu nhiên |
+| `pinCode` | `String` | `required, index` | Mã OTP 6 số (duy nhất trong các đơn `WAITING_FOR_PICKUP` tại cùng 1 trạm tủ) |
 | `qrCodeToken` | `String` | `required, unique` | Token bí mật phục vụ tạo mã QR quét mở tủ |
+| `failedAttempts` | `Number` | `default: 0` | Số lần nhập sai mã OTP liên tiếp tại trạm tủ (chống Brute-force dò mã) |
+| `lockedUntil` | `Date` | `optional` | Khóa tạm thời quyền mở ngăn bằng OTP nếu nhập sai quá 5 lần (ví dụ: khóa 15 phút) |
 | `status` | `String (Enum)` | `enum: PackageStatus, default: WAITING_FOR_PICKUP` | Trạng thái bưu kiện |
 | `droppedOffAt` | `Date` | `required` | Thời điểm shipper bỏ hàng vào tủ thành công |
 | `pickedUpAt` | `Date` | `optional` | Thời điểm cư dân mở tủ lấy hàng |
@@ -153,10 +158,40 @@ export enum PackageStatus {
 | `lockerId` | `Types.ObjectId` | `ref: 'Locker', required, index` | Trạm tủ thực hiện hành động |
 | `boxNumber` | `Number` | `required` | Số ngăn tủ bị tác động |
 | `packageId` | `Types.ObjectId` | `ref: 'Package', optional` | Bưu kiện liên quan |
-| `action` | `String (Enum)` | `enum: LockerAction` | Hành động: `DROP_OFF`, `PICKUP_OTP`, `PICKUP_QR`, `REMOTE_OPEN` |
+| `action` | `String (Enum)` | `enum: LockerAction` | Hành động mở/đóng tủ |
 | `performedBy` | `String` | `required` | Số điện thoại hoặc User ID người thực hiện |
 | `status` | `String` | `SUCCESS` hoặc `FAILED` | Kết quả thực thi |
+| `metadata` | `Object` | `optional` | Dữ liệu ngữ cảnh kỹ thuật: trạng thái cảm biến IR/Reed switch, mã lỗi phần cứng |
 | `createdAt` | `Date` | `timestamps: true` | Thời điểm thực hiện |
+
+```typescript
+export enum LockerAction {
+  DROP_OFF = 'DROP_OFF',                     // Tài xế mở tủ gửi hàng
+  PICKUP_OTP = 'PICKUP_OTP',                 // Cư dân nhập mã OTP nhận hàng
+  PICKUP_QR = 'PICKUP_QR',                   // Cư dân quét mã QR nhận hàng
+  REMOTE_OPEN = 'REMOTE_OPEN',               // Ban quản lý mở tủ từ xa
+  FORCE_OPEN = 'FORCE_OPEN',                 // Mở cưỡng bức khi xử lý sự cố kỹ thuật
+  OVERDUE_RETRIEVAL = 'OVERDUE_RETRIEVAL',   // Thu hồi bưu phẩm quá hạn lưu kho
+}
+```
+
+---
+
+### 2.5. Chiến Lược Đánh Chỉ Mục MongoDB (Database Indexing Strategy)
+
+Để đảm bảo toàn vẹn dữ liệu phần cứng và tối ưu hóa hiệu năng truy vấn cho toàn hệ thống:
+
+```typescript
+// 1. Boxes Collection: Đảm bảo trong 1 trạm tủ không bao giờ trùng lặp số ngăn
+BoxSchema.index({ lockerId: 1, boxNumber: 1 }, { unique: true });
+BoxSchema.index({ lockerId: 1, status: 1, size: 1 }); // Shipper lọc nhanh ngăn trống theo cỡ
+
+// 2. Packages Collection: Tối ưu tra cứu nhận hàng và Cronjob
+PackageSchema.index({ lockerId: 1, pinCode: 1, status: 1 }); // Mở tủ bằng OTP tại màn hình Kiosk
+PackageSchema.index({ qrCodeToken: 1 }, { unique: true });    // Quét QR mở tủ tức thì
+PackageSchema.index({ residentId: 1, status: 1 });           // Cư dân xem danh sách bưu kiện của mình
+PackageSchema.index({ status: 1, expiredAt: 1 });            // Cronjob tự động quét đơn hàng quá hạn 48h
+```
 
 ---
 

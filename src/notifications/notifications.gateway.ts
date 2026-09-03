@@ -133,4 +133,34 @@ export class NotificationsGateway
     this.server.to(buildingRoom).emit('RESIDENT_APPROVAL_RESULT', eventPayload);
     this.server.to(residentRoom).emit('RESIDENT_APPROVAL_RESULT', eventPayload);
   }
+
+  // Phát thông báo bưu kiện mới đã đến ngăn tủ cho Cư Dân
+  notifyPackageDropOff(
+    residentId: string,
+    buildingId: string,
+    packageInfo: {
+      id: string;
+      trackingNumber: string;
+      boxNumber: number;
+      lockerName: string;
+      lockerCode: string;
+      pinCode: string;
+      carrierName: string;
+      droppedOffAt: Date;
+    },
+  ): void {
+    const residentRoom = `resident_${residentId}`;
+    const buildingRoom = `building_${buildingId}`;
+
+    const eventPayload = {
+      type: 'PACKAGE_NEW',
+      title: `Bưu kiện mới tại Ngăn #${packageInfo.boxNumber}!`,
+      message: `Đơn hàng ${packageInfo.trackingNumber} từ ${packageInfo.carrierName} đã được đặt tại Ngăn #${packageInfo.boxNumber} (${packageInfo.lockerName}). Mã OTP nhận hàng: ${packageInfo.pinCode}`,
+      package: packageInfo,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.server.to(residentRoom).emit('PACKAGE_NEW', eventPayload);
+    this.server.to(buildingRoom).emit('PACKAGE_NEW', eventPayload);
+  }
 }
