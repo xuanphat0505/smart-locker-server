@@ -59,4 +59,32 @@ export class NotificationsService {
       );
     }
   }
+
+  // Điều phối phát thông báo bưu kiện mới đến cho Cư Dân
+  notifyPackageDropOff(
+    residentId: string,
+    buildingId: string,
+    packageInfo: {
+      id: string;
+      trackingNumber: string;
+      boxNumber: number;
+      lockerName: string;
+      lockerCode: string;
+      pinCode: string;
+      carrierName: string;
+      droppedOffAt: Date;
+    },
+  ): void {
+    try {
+      this.notificationsGateway.notifyPackageDropOff(
+        residentId,
+        buildingId,
+        packageInfo,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi điều phối thông báo bưu kiện: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 }

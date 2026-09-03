@@ -128,6 +128,27 @@ Hiển thị danh sách tóm tắt toàn bộ các đơn hàng đã gửi trong 
 
 ---
 
+### 3.6. Quy Trình Khách Vãng Lai Trên Ứng Dụng Di Động (Mobile App Guest Drop-off Flow)
+
+Đối với các trạm tủ không trang bị màn hình Kiosk lớn hoặc khi tài xế sử dụng trực tiếp ứng dụng di động Smart Locker trên điện thoại của mình:
+
+1. **Khởi Tạo Phiên Shipper Thông Minh (Smart Session BottomSheet)**:
+   - Khi Shipper chọn chế độ *"Tài Xế Giao Hàng"* từ màn hình Đăng Nhập:
+     - Ứng dụng kiểm tra bộ nhớ đệm `AsyncStorage`: Nếu đã từng giao hàng trước đó $\rightarrow$ Tự động điền lại Số điện thoại Shipper, Tên tài xế và Hãng vận chuyển (tiết kiệm 100% thời gian nhập liệu).
+     - Nếu là lần đầu tiên $\rightarrow$ Mở BottomSheet yêu cầu nhập SĐT Shipper và chọn Hãng giao vận.
+2. **Quét Mã Định Danh Trạm Tủ (`/drop-off/scan`)**:
+   - Quét mã QR dán trên thân tủ (hoặc chọn nhanh mã tủ `LK-S101-01`, `LK-TECCO-01`).
+3. **Màn Hình Gửi Hàng Tập Trung (`/locker/select`)**:
+   - **Tự động đối soát Cư Dân**: Gõ SĐT Cư Dân $\rightarrow$ Tự động kiểm tra danh sách duyệt cư dân của tòa nhà, hiển thị Tên và Căn hộ.
+   - **Ràng buộc kích thước**: Chọn cỡ bưu phẩm (S, M, L) $\rightarrow$ Hệ thống tự động kiểm tra tương thích, ngăn chặn việc chọn ngăn nhỏ hơn bưu phẩm.
+   - **Chọn ngăn tủ 2D**: Bấm chọn ngăn trống trực tiếp trên sơ đồ bàn cờ thời gian thực.
+   - **Bấm "Mở tủ & Gửi hàng"**: Hệ thống tự động truyền `shipperPhone`, `shipperName` từ Phiên làm việc vào API `POST /packages/drop-off` mà không bị gán cứng.
+4. **Màn Hình Thành Công & Gửi Liên Hoàn (`/locker/success`)**:
+   - Nút **`[ ➕ GỬI TIẾP ĐƠN NỮA ]`**: Giữ nguyên toàn bộ thông tin phiên làm việc của Shipper, quay lại màn hình chọn ngăn để giao tiếp các đơn hàng tiếp theo cho cư dân khác trong tòa nhà chỉ với **5 giây/đơn**.
+   - Nút **`[ 🏁 HOÀN TẤT PHIÊN GIAO ]`**: Chuyển sang màn hình Tổng Kết (`/drop-off/summary`) để xem biên bản điện tử và đóng phiên làm việc.
+
+---
+
 ## 4. Cơ Chế An Ninh & Chống Gian Lận (Accountability)
 
 | Rủi Ro Tiềm Ẩn | Cơ Chế Kiểm Soát & Giải Quyết Thực Tế |
@@ -202,3 +223,105 @@ Hiển thị danh sách tóm tắt toàn bộ các đơn hàng đã gửi trong 
 3. **Đối Với Ban Quản Lý Tòa Nhà**:
    - Sảnh chung cư văn minh, gọn gàng, không có cảnh bưu kiện vứt bừa bãi tại bàn lễ tân.
    - Tránh rủi ro thất lạc, mất cắp hàng hóa.
+
+---
+
+## 7. Khung An Ninh Đa Tầng: Chống SĐT Ảo, Phá Hoại & Hàng Cấm (Multi-Layer Security Framework)
+
+> [!WARNING]
+> **Mối đe dọa thực tế đối với mô hình Shipper vãng lai không cần tài khoản**:
+> 1. **Kẻ xấu nhập Số Điện Thoại Ảo (Fake Phone)** để chiếm dụng ngăn tủ, phá phách làm tê liệt trạm tủ hoặc gửi đồ rác/hư hỏng.
+> 2. **Lợi dụng tủ thông minh để giao nhận hàng cấm**: Chất cháy nổ, vũ khí, ma túy, hóa chất độc hại gây đe dọa trực tiếp an ninh và tính mạng cư dân chung cư.
+
+Để triệt tiêu các nguy cơ trên mà **vẫn giữ nguyên tốc độ giao hàng nhanh** cho Shipper chân chính, hệ thống triển khai kiến trúc **Phòng Thủ Đa Tầng Chuyên Sâu (Defense-in-Depth)** gồm 4 lớp bảo vệ:
+
+```mermaid
+graph TD
+    A[Shipper Vãng Lai Gửi Hàng] --> Layer1[Lớp 1: Xác Thực SIM Viễn Thông Qua OTP 4 Số]
+    Layer1 --> Layer2[Lớp 2: Ràng Buộc Cư Dân & Nút Báo Cáo Khẩn Cấp]
+    Layer2 --> Layer3[Lớp 3: Giám Sát CCTV AI Snapshot & Cảm Biến Kép IoT]
+    Layer3 --> Layer4[Lớp 4: Hệ Thống Blacklist Tự Động & Chế Tài Pháp Lý]
+```
+
+---
+
+### 7.1. Lớp 1: Xác Thực SIM Viễn Thông Qua OTP Tức Thời (Instant Phone Verification)
+
+Kẻ xấu chỉ có thể nhập số ảo khi hệ thống **không xác minh quyền sở hữu thiết bị/SIM**.
+
+- **Quy trình triển khai**:
+  1. Khi một Shipper nhập số điện thoại lần đầu tiên tại trạm tủ hoặc ứng dụng di động $\rightarrow$ Hệ thống tự động gửi **Mã OTP 4 số** qua SMS Brandname hoặc Zalo ZNS trong **1 - 2 giây**.
+  2. Shipper nhập 4 số OTP để xác thực quyền sở hữu SIM.
+  3. **Tối ưu trải nghiệm không gây phiền hà**:
+     - Shipper **CHỈ CẦN XÁC THỰC OTP 1 LẦN DUY NHẤT** khi bắt đầu ca làm việc hoặc lần đầu tiên đến trạm tủ.
+     - Hệ thống cấp mã `GuestTrustToken` lưu trên thiết bị / Cache Redis với hạn dùng **60 ngày**. Trong suốt 60 ngày tiếp theo, tài xế đến giao tại bất kỳ tủ nào cũng **không cần nhập lại OTP**.
+- **Ý nghĩa an ninh**:
+  - Chặn **100% SĐT rác, SĐT bịa đặt**.
+  - Theo Nghị định 49/2017/NĐ-CP và Luật Viễn thông Việt Nam, mọi thuê bao di động đều được định danh CCCD chính chủ $\rightarrow$ Luôn truy cứu được danh tính người gửi khi có sự cố.
+
+---
+
+### 7.2. Lớp 2: Cơ Chế "Khóa Hai Đầu" — Cư Dân Kiểm Soát & Nút Báo Cáo Khẩn Cấp
+
+Kẻ xấu không thể tự ý mở tủ nếu không có **Số điện thoại Cư Dân hợp lệ** được Ban Quản Lý phê duyệt:
+
+1. **Ràng buộc Người Nhận Cư Dân**:
+   - Hệ thống đối soát API `GET /lockers/lookup-receiver`: Bắt buộc số điện thoại người nhận phải là Cư Dân chính thức thuộc tòa nhà. Không hỗ trợ gửi cho người ngoài chung cư.
+2. **Thông Báo Tức Thì Kèm Quyền Khóa Ngăn Tủ (Panic Button)**:
+   - Ngay khi Shipper đóng cửa tủ, Cư Dân nhận được thông báo đẩy (Push Notification) trên ứng dụng:
+     > *"📦 Kiện hàng mới từ Tài xế [0987.xxx.xxx] đã được gửi vào Ngăn #05."*
+   - Kèm nút hành động khẩn cấp: **`[ 🚨 TÔI KHÔNG ĐẶT ĐƠN NÀY / BÁO CÁO ĐƠN LẠ ]`**.
+   - Nếu Cư Dân bấm báo cáo đơn lạ:
+     - Hệ thống **khóa cứng ngay lập tức** Ngăn số 05 (vô hiệu hóa mã OTP nhận hàng).
+     - Đèn LED trên ngăn tủ chuyển sang màu đỏ nhấp nháy, phát còi cảnh báo ngắn.
+     - Phát tín hiệu khẩn cấp đến màn hình giám sát của **Ban Quản Lý và Phòng Trực Bảo Vệ Tòa Nhà**.
+
+---
+
+### 7.3. Lớp 3: Bằng Chứng Kỹ Thuật Số & Cảm Biến Vật Lý (CCTV & Dual IoT Sensors)
+
+1. **Camera AI Snapshot (Trích xuất hình ảnh lúc mở tủ)**:
+   - Camera an ninh góc rộng trên nóc trạm tủ tự động chụp lại hình ảnh khuôn mặt của người thực hiện thao tác mở tủ và ghi nhận cùng thời điểm `droppedOffAt`.
+   - Kết hợp hệ thống camera giao thông tại sảnh chung cư ghi nhận biển số xe của tài xế ra vào cổng sảnh.
+2. **Cảm biến kép ngăn tủ (Dual Sensor)**:
+   - **Cảm biến hồng ngoại**: Xác định tài xế có đặt vật thể vào ngăn hay không (chống bấm mở tủ ảo rồi bỏ đi).
+   - **Cảm biến trọng lượng (Weight Sensor)**: Phát hiện các vật thể rỗng (< 20g) hoặc các kiện hàng quá tải trọng cho phép.
+   - **Cảm biến khói/nhiệt độ IoT**: Cảnh báo sớm nếu có nguy cơ cháy nổ từ bên trong ngăn tủ.
+
+---
+
+### 7.4. Lớp 4: Hệ Thống Danh Sách Đen (Automated Blacklist) & Chế Tài Pháp Lý
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Attacker as Đối Tượng Phá Hoại / Gian Lận
+    participant Kiosk as Trạm Tủ Smart Locker
+    participant Backend as NestJS Server
+    participant DB as MongoDB (Blacklist)
+    actor Security as Bảo Vệ Tòa Nhà
+    actor Police as Cơ Quan Công An
+
+    Attacker->>Kiosk: Thao tác gửi đồ lạ / Bỏ bom / Quấy rối
+    Note over Kiosk: Camera trạm tủ ghi lại khuôn mặt + Biển số xe
+    Backend->>DB: Ghi nhận SĐT, IP, DeviceID, Snapshot URL
+
+    Note over Backend: Phát hiện gian lận (Cư dân báo cáo hoặc Cảm biến phát hiện)
+    Backend->>DB: Tự động đưa SĐT vào Blacklist (Cấm vĩnh viễn toàn hệ thống)
+    Backend->>Security: Báo động khẩn cấp tới Phòng Bảo Vệ!
+    Security->>Kiosk: Bảo vệ giữ đối tượng tại hiện trường
+
+    alt Vi phạm hình sự (Hàng cấm, chất cháy nổ)
+        Security->>Police: Bàn giao tang vật, trích xuất camera và dữ liệu viễn thông SIM
+        Police->>Attacker: Khởi tố theo Bộ Luật Hình Sự Việt Nam
+    end
+```
+
+1. **Danh Sách Đen Toàn Cầu (Global Blacklist)**:
+   - Thuê bao vi phạm (mở tủ không gửi hàng nhiều lần, bị cư dân báo cáo đơn lạ, spam OTP) sẽ bị đưa vào danh sách đen.
+   - SĐT này sẽ bị **chặn vĩnh viễn** không thể thực hiện gửi hoặc nhận hàng tại bất kỳ trạm tủ nào thuộc hệ thống Smart Locker trên toàn quốc.
+2. **Biển Cảnh Báo Răn Đe Pháp Lý**:
+   - Trên giao diện Kiosk/Mobile luôn có thông báo pháp lý bắt buộc:
+     > *"⚠️ Mọi hành vi gửi chất cấm, chất cháy nổ, phá hoại trạm tủ hoặc quấy rối cư dân đều được hệ thống Camera an ninh và cơ sở dữ liệu viễn thông ghi lại toàn bộ. Ban Quản Lý sẽ chuyển hồ sơ cùng dữ liệu định danh cho Cơ quan Công an xử lý nghiêm theo Pháp luật Việt Nam."*
+   - Hàng rào pháp lý và tâm lý này ngăn chặn hầu hết các hành vi quấy rối bộc phát.
+
