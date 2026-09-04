@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsEnum,
   Length,
+  Matches,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BoxSize } from '../../lockers/enums/locker.enums';
@@ -83,6 +84,14 @@ export class DropOffPackageDto {
   @IsString()
   @IsOptional()
   note?: string;
+
+  @ApiPropertyOptional({
+    example: 'shp_sess_3f8a920bc129487e',
+    description: 'Token phiên giao hàng tin cậy sau khi tài xế đã xác thực OTP',
+  })
+  @IsString()
+  @IsOptional()
+  sessionToken?: string;
 }
 
 // DTO nhận bưu kiện bằng mã OTP 6 số tại màn hình Kiosk trạm tủ
@@ -122,4 +131,54 @@ export class PickupQrDto {
   @IsString()
   @IsNotEmpty()
   qrCodeToken: string;
+}
+
+// DTO yêu cầu gửi mã OTP xác thực số điện thoại của tài xế
+export class SendShipperOtpDto {
+  @ApiProperty({
+    example: '0987654321',
+    description:
+      'Số điện thoại của tài xế cần xác thực (10 chữ số chuẩn Việt Nam)',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^(\+84|0)[3|5|7|8|9][0-9]{8}$/, {
+    message: 'Số điện thoại tài xế không đúng định dạng số điện thoại Việt Nam',
+  })
+  phone: string;
+}
+
+// DTO xác minh mã OTP để kích hoạt phiên giao hàng tin cậy của tài xế
+export class VerifyShipperOtpDto {
+  @ApiProperty({
+    example: '0987654321',
+    description: 'Số điện thoại của tài xế',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^(\+84|0)[3|5|7|8|9][0-9]{8}$/, {
+    message: 'Số điện thoại tài xế không đúng định dạng số điện thoại Việt Nam',
+  })
+  phone: string;
+
+  @ApiProperty({
+    example: '849201',
+    description: 'Mã OTP 6 chữ số nhận được qua SMS hoặc Zalo',
+  })
+  @IsString()
+  @Length(6, 6, { message: 'Mã OTP xác thực phải gồm đúng 6 chữ số' })
+  @IsNotEmpty()
+  otp: string;
+}
+
+// DTO xác minh token trả về từ Google Firebase sau khi tài xế xác thực OTP thành công
+export class VerifyFirebaseTokenDto {
+  @ApiProperty({
+    example: 'eyJhbGciOiJSUzI1NiIsImtpZCI6Ij...',
+    description:
+      'Mã ID Token do Firebase cấp sau khi tài xế nhập mã OTP qua SMS thành công',
+  })
+  @IsString()
+  @IsNotEmpty({ message: 'Firebase idToken không được để trống' })
+  idToken: string;
 }

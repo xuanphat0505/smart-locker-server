@@ -1,6 +1,11 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { Package, PackageSchema } from './schemas/package.schema';
+import {
+  Package,
+  PackageSchema,
+  ShipperSession,
+  ShipperSessionSchema,
+} from './schemas';
 import {
   LockerLog,
   LockerLogSchema,
@@ -16,6 +21,7 @@ import { PackagesService } from './packages.service';
   imports: [
     MongooseModule.forFeature([
       { name: Package.name, schema: PackageSchema },
+      { name: ShipperSession.name, schema: ShipperSessionSchema },
       { name: LockerLog.name, schema: LockerLogSchema },
       { name: Locker.name, schema: LockerSchema },
       { name: Box.name, schema: BoxSchema },
