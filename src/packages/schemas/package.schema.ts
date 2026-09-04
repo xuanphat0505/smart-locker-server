@@ -78,6 +78,10 @@ export class Package extends Document {
   @Prop({ required: false, trim: true })
   shipperName?: string;
 
+  // Cờ xác nhận số điện thoại của tài xế đã được xác thực OTP chính chủ
+  @Prop({ default: false, index: true })
+  isShipperVerified: boolean;
+
   // Đơn vị giao vận chuyển phát bưu phẩm
   @Prop({ required: true, trim: true })
   carrierName: string;

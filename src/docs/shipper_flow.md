@@ -32,14 +32,22 @@ Khi Shipper mang **nhiều đơn hàng (5, 10, 20 đơn)** đến cùng một t�
 sequenceDiagram
     autonumber
     actor Shipper as Shipper (Tài Xế)
-    participant Kiosk as Màn Hình Kiosk Tủ / Web App
+    participant Kiosk as Màn Hình Kiosk Tủ / Mobile App
+    participant OTP as Dịch Vụ SMS/Zalo OTP
     participant Backend as NestJS Server (POST /packages/drop-off)
     participant DB as MongoDB
     actor Resident as Cư Dân (Mobile App)
 
-    Note over Shipper,Kiosk: 🟢 BẮT ĐẦU PHIÊN (CHỈ NHẬP 1 LẦN DUY NHẤT Ở ĐƠN ĐẦU TIÊN)
+    Note over Shipper,Kiosk: 🟢 BẮT ĐẦU PHIÊN (XÁC THỰC SĐT CHÍNH CHỦ LẦN ĐẦU)
     Shipper->>Kiosk: 1. Nhập SĐT Shipper (0987654321) + Chọn hãng (Shopee Xpress)
-    Note over Kiosk: Khởi tạo Session: shipperPhone=0987654321, carrier=Shopee Xpress (Timeout 5 phút)
+    alt Số điện thoại mới / Chưa xác thực trên thiết bị
+        Kiosk->>OTP: Gửi mã OTP 4 số về SĐT Shipper
+        OTP-->>Shipper: SMS/Zalo: "Mã xác thực Smart Locker của bạn là 8492"
+        Shipper->>Kiosk: Nhập mã OTP (8492) -> Xác thực thành công!
+        Note over Kiosk: Lưu Session & Tin cậy thiết bị (Trust Device 60 ngày)
+    else SĐT đã xác thực trước đó (Đã lưu Session)
+        Note over Kiosk: Bỏ qua OTP, vào thẳng phiên giao hàng ngay lập tức!
+    end
 
     Note over Shipper,Resident: 📦 GIAO ĐƠN THỨ 1 (10 giây)
     Shipper->>Kiosk: 2. Nhập SĐT Cư Dân 1 (0912345678) + Chọn Box Vừa
@@ -51,7 +59,7 @@ sequenceDiagram
     Backend->>Resident: Gửi Push Notification kèm OTP cho Cư Dân 1
     Note over Kiosk: Màn hình hỏi: [ ➕ GỬI TIẾP ĐƠN NỮA ] hoặc [ 🚪 HOÀN TẤT GIAO HÀNG ]
 
-    Note over Shipper,Resident: 📦 GIAO ĐƠN THỨ 2 (Chỉ mất 5 giây - KHÔNG CẦN NHẬP LẠI SĐT SHIPPER)
+    Note over Shipper,Resident: 📦 GIAO ĐƠN THỨ 2 (Chỉ mất 5 giây - KHÔNG CẦN NHẬP LẠI SĐT & OTP)
     Shipper->>Kiosk: 3. Bấm [ ➕ GỬI TIẾP ĐƠN NỮA ]
     Shipper->>Kiosk: Chỉ cần nhập SĐT Cư Dân 2 (0933445566) + Chọn Box Nhỏ
     Kiosk->>Backend: Gửi đơn 2 (Kèm SĐT Shipper tự động từ Session)
@@ -73,10 +81,14 @@ sequenceDiagram
 
 ### 3.1. Màn Hình 1: Bắt Đầu Phiên (Đơn đầu tiên)
 - **Nút to**: `[ 📦 GỬI HÀNG TẠI TỦ ]`
-- **Nhập**:
-  1. Số điện thoại Shipper: `0987 654 321` (Được lưu trong Session).
-  2. Hãng vận chuyển: *Shopee Xpress, GHTK, GHN, Viettel Post, Khác...*
-  3. Số điện thoại Cư Dân nhận hàng: `0912 345 678`.
+- **Các bước nhập liệu & xác minh**:
+  1. **Số điện thoại Shipper**: `0987 654 321`.
+  2. **Xác thực quyền sở hữu SIM (Lớp 1 - Chống SĐT Ảo & Phá Hoại)**:
+     - Nếu SĐT lần đầu tiên sử dụng hoặc phiên đã hết hạn: Hệ thống gửi mã OTP 4 số qua SMS/Zalo ZNS.
+     - Shipper nhập 4 số OTP để kích hoạt phiên (chỉ mất 3 - 5 giây).
+     - Hệ thống lưu cờ **Tin Cậy Thiết Bị (Trust Device 60 ngày)** trên máy/Kiosk $\rightarrow$ Các đơn tiếp theo và các lần giao hàng sau **không cần nhập lại OTP**.
+  3. **Hãng vận chuyển**: Chọn nhanh *Shopee Xpress, GHTK, GHN, Viettel Post, Khác...*
+  4. **Số điện thoại Cư Dân nhận hàng**: `0912 345 678`.
 - **Hệ thống hiển thị xác nhận tức thì**:
   > ✅ **Xác nhận người nhận:** Cư Dân *Nguyễn Văn A* — Căn hộ: *A1204*
 - **Chọn kích thước Box**:
@@ -97,7 +109,7 @@ sequenceDiagram
 Màn hình hiển thị 2 nút bấm lớn:
 - 🟠 **`[ ➕ GỬI TIẾP ĐƠN NỮA ]`** (Màu cam nổi bật):
   - Nhảy ngay vào màn hình nhập **Số điện thoại Cư Dân tiếp theo**.
-  - **Giữ nguyên SĐT Shipper & Hãng vận chuyển** từ phiên hiện tại.
+  - **Giữ nguyên SĐT Shipper (đã xác thực OTP) & Hãng vận chuyển** từ phiên hiện tại.
   - Shipper gửi đơn thứ 2, 3, 4... chỉ mất **5 - 7 giây mỗi đơn**!
 - ⚪ **`[ 🚪 HOÀN TẤT GIAO HÀNG ]`** (Màu xám):
   - Kết thúc phiên làm việc.
@@ -109,7 +121,7 @@ Hiển thị danh sách tóm tắt toàn bộ các đơn hàng đã gửi trong 
 ```text
 ======================================================
            TỔNG KẾT PHIÊN GIAO HÀNG (10 ĐƠN)
-  Shipper: 0987 654 321  |  Đơn vị: Shopee Xpress
+  Shipper: 0987 654 321 (Đã xác minh OTP) | Đơn vị: Shopee Xpress
   Thời gian: 31/08/2026 16:30  |  Trạm tủ: Sảnh Tòa S1.01
 ======================================================
 1. Căn A1204 (Anh A)     ->  Ngăn #05 (M)  [ ĐÃ GỬI ]
@@ -128,31 +140,11 @@ Hiển thị danh sách tóm tắt toàn bộ các đơn hàng đã gửi trong 
 
 ---
 
-### 3.6. Quy Trình Khách Vãng Lai Trên Ứng Dụng Di Động (Mobile App Guest Drop-off Flow)
-
-Đối với các trạm tủ không trang bị màn hình Kiosk lớn hoặc khi tài xế sử dụng trực tiếp ứng dụng di động Smart Locker trên điện thoại của mình:
-
-1. **Khởi Tạo Phiên Shipper Thông Minh (Smart Session BottomSheet)**:
-   - Khi Shipper chọn chế độ *"Tài Xế Giao Hàng"* từ màn hình Đăng Nhập:
-     - Ứng dụng kiểm tra bộ nhớ đệm `AsyncStorage`: Nếu đã từng giao hàng trước đó $\rightarrow$ Tự động điền lại Số điện thoại Shipper, Tên tài xế và Hãng vận chuyển (tiết kiệm 100% thời gian nhập liệu).
-     - Nếu là lần đầu tiên $\rightarrow$ Mở BottomSheet yêu cầu nhập SĐT Shipper và chọn Hãng giao vận.
-2. **Quét Mã Định Danh Trạm Tủ (`/drop-off/scan`)**:
-   - Quét mã QR dán trên thân tủ (hoặc chọn nhanh mã tủ `LK-S101-01`, `LK-TECCO-01`).
-3. **Màn Hình Gửi Hàng Tập Trung (`/locker/select`)**:
-   - **Tự động đối soát Cư Dân**: Gõ SĐT Cư Dân $\rightarrow$ Tự động kiểm tra danh sách duyệt cư dân của tòa nhà, hiển thị Tên và Căn hộ.
-   - **Ràng buộc kích thước**: Chọn cỡ bưu phẩm (S, M, L) $\rightarrow$ Hệ thống tự động kiểm tra tương thích, ngăn chặn việc chọn ngăn nhỏ hơn bưu phẩm.
-   - **Chọn ngăn tủ 2D**: Bấm chọn ngăn trống trực tiếp trên sơ đồ bàn cờ thời gian thực.
-   - **Bấm "Mở tủ & Gửi hàng"**: Hệ thống tự động truyền `shipperPhone`, `shipperName` từ Phiên làm việc vào API `POST /packages/drop-off` mà không bị gán cứng.
-4. **Màn Hình Thành Công & Gửi Liên Hoàn (`/locker/success`)**:
-   - Nút **`[ ➕ GỬI TIẾP ĐƠN NỮA ]`**: Giữ nguyên toàn bộ thông tin phiên làm việc của Shipper, quay lại màn hình chọn ngăn để giao tiếp các đơn hàng tiếp theo cho cư dân khác trong tòa nhà chỉ với **5 giây/đơn**.
-   - Nút **`[ 🏁 HOÀN TẤT PHIÊN GIAO ]`**: Chuyển sang màn hình Tổng Kết (`/drop-off/summary`) để xem biên bản điện tử và đóng phiên làm việc.
-
----
-
 ## 4. Cơ Chế An Ninh & Chống Gian Lận (Accountability)
 
 | Rủi Ro Tiềm Ẩn | Cơ Chế Kiểm Soát & Giải Quyết Thực Tế |
 | :--- | :--- |
+| **Shipper nhập SĐT ảo (Fake Phone) để phá phách, chiếm tủ hoặc gửi hàng cấm vô danh** | **Xác thực quyền sở hữu SIM qua SMS/Zalo OTP (Lớp 1)**:<br/>1. Bắt buộc nhập mã OTP 4 số gửi về SIM điện thoại của Shipper ở lần đầu tiên. Chặn 100% SĐT rác/ảo vì kẻ xấu bắt buộc phải sở hữu SIM thật đang hoạt động.<br/>2. Khi xảy ra sự cố gửi hàng cấm, BQL trích xuất SĐT thật (đã đăng ký thông tin thuê bao chính chủ với nhà mạng) cung cấp cho Cơ quan Công an điều tra.<br/>3. Thiết bị được cấp token tin cậy (Trust Device) trong 60 ngày để lần sau không cần nhập lại OTP, giữ nguyên tốc độ giao hàng nhanh dưới 15 giây. |
 | **Shipper bấm mở tủ nhưng không bỏ hàng vào** | 1. **Cảm biến hồng ngoại/trọng lượng** gắn trong ngăn tủ kiểm tra sự hiện diện của kiện hàng.<br/>2. **Cư dân phản hồi**: Khi ra mở tủ thấy trống, cư dân bấm nút *"Báo cáo: Ngăn tủ rỗng"* trên app $\rightarrow$ Hệ thống truy xuất ngay `shipperPhone` của đơn đó. |
 | **Shipper gửi nhầm đồ hoặc hàng hóa bị hỏng** | 1. **Camera an ninh góc rộng** đặt trên nóc trạm tủ ghi lại toàn bộ quá trình đóng/mở tủ.<br/>2. **Số điện thoại Shipper** được lưu vĩnh viễn trên bản ghi đơn hàng để BQL tòa nhà liên hệ xử lý bồi thường. |
 | **Shipper gửi cho người ngoài không thuộc chung cư** | Hệ thống **chặn hoàn toàn** việc mở tủ nếu số điện thoại người nhận chưa được Ban Quản Lý phê duyệt là Cư Dân chính thức của tòa nhà. |
@@ -162,7 +154,72 @@ Hiển thị danh sách tóm tắt toàn bộ các đơn hàng đã gửi trong 
 
 ## 5. Đặc Tả API Phục Vụ Shipper Giao Hàng
 
-### 5.1. Tra Cứu Căn Hộ Cư Dân Trước Khi Gửi
+### 5.1. Gửi Mã OTP Xác Thực Số Điện Thoại Shipper (Lần đầu / Hết hạn session)
+- **Endpoint**: `POST /packages/shipper/send-otp`
+- **Quyền truy cập**: Public (Kiosk Tủ / Mobile App)
+- **Request Body**:
+```json
+{
+  "phone": "0987654321"
+}
+```
+- **Response (200 OK)**:
+```json
+{
+  "success": true,
+  "message": "Đã gửi mã xác thực 4 số qua SMS/Zalo tới 0987654321",
+  "expiresInSeconds": 180
+}
+```
+
+---
+
+### 5.2. Xác Minh Mã OTP & Khởi Tạo Phiên Tin Cậy (Nội bộ / Test nhanh)
+- **Endpoint**: `POST /packages/shipper/verify-otp`
+- **Quyền truy cập**: Public (Kiosk Tủ / Mobile App)
+- **Request Body**:
+```json
+{
+  "phone": "0987654321",
+  "otp": "849201"
+}
+```
+- **Response (200 OK)**:
+```json
+{
+  "success": true,
+  "message": "Xác thực số điện thoại tài xế thành công",
+  "sessionToken": "shp_sess_a8f93b2190c...",
+  "phone": "0987654321",
+  "expiresAt": "2026-11-03T00:00:00.000Z"
+}
+```
+
+---
+
+### 5.3. Xác Minh Google Firebase ID Token (Xác thực SMS Thật)
+- **Endpoint**: `POST /packages/shipper/verify-firebase-token`
+- **Quyền truy cập**: Public (Kiosk Tủ / Mobile App)
+- **Request Body**:
+```json
+{
+  "idToken": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ij..."
+}
+```
+- **Response (200 OK)**:
+```json
+{
+  "success": true,
+  "message": "Xác thực số điện thoại tài xế thành công qua Firebase",
+  "sessionToken": "shp_sess_a8f93b2190c...",
+  "phone": "0987654321",
+  "expiresAt": "2026-11-03T00:00:00.000Z"
+}
+```
+
+---
+
+### 5.4. Tra Cứu Căn Hộ Cư Dân Trước Khi Gửi
 - **Endpoint**: `GET /lockers/lookup-receiver`
 - **Quyền truy cập**: Public (Kiosk Tủ)
 - **Query Params**: `phone=0912345678`, `lockerCode=LK-S101-01`
@@ -178,7 +235,7 @@ Hiển thị danh sách tóm tắt toàn bộ các đơn hàng đã gửi trong 
 
 ---
 
-### 5.2. Thực Hiện Gửi Hàng & Mở Cửa Tủ (Hỗ Trợ Batch Drop-off)
+### 5.4. Thực Hiện Gửi Hàng & Mở Cửa Tủ (Hỗ Trợ Batch Drop-off)
 - **Endpoint**: `POST /packages/drop-off`
 - **Quyền truy cập**: Public (Kiosk Tủ / Web Quick Drop-off)
 - **Request Body**:
@@ -223,105 +280,3 @@ Hiển thị danh sách tóm tắt toàn bộ các đơn hàng đã gửi trong 
 3. **Đối Với Ban Quản Lý Tòa Nhà**:
    - Sảnh chung cư văn minh, gọn gàng, không có cảnh bưu kiện vứt bừa bãi tại bàn lễ tân.
    - Tránh rủi ro thất lạc, mất cắp hàng hóa.
-
----
-
-## 7. Khung An Ninh Đa Tầng: Chống SĐT Ảo, Phá Hoại & Hàng Cấm (Multi-Layer Security Framework)
-
-> [!WARNING]
-> **Mối đe dọa thực tế đối với mô hình Shipper vãng lai không cần tài khoản**:
-> 1. **Kẻ xấu nhập Số Điện Thoại Ảo (Fake Phone)** để chiếm dụng ngăn tủ, phá phách làm tê liệt trạm tủ hoặc gửi đồ rác/hư hỏng.
-> 2. **Lợi dụng tủ thông minh để giao nhận hàng cấm**: Chất cháy nổ, vũ khí, ma túy, hóa chất độc hại gây đe dọa trực tiếp an ninh và tính mạng cư dân chung cư.
-
-Để triệt tiêu các nguy cơ trên mà **vẫn giữ nguyên tốc độ giao hàng nhanh** cho Shipper chân chính, hệ thống triển khai kiến trúc **Phòng Thủ Đa Tầng Chuyên Sâu (Defense-in-Depth)** gồm 4 lớp bảo vệ:
-
-```mermaid
-graph TD
-    A[Shipper Vãng Lai Gửi Hàng] --> Layer1[Lớp 1: Xác Thực SIM Viễn Thông Qua OTP 4 Số]
-    Layer1 --> Layer2[Lớp 2: Ràng Buộc Cư Dân & Nút Báo Cáo Khẩn Cấp]
-    Layer2 --> Layer3[Lớp 3: Giám Sát CCTV AI Snapshot & Cảm Biến Kép IoT]
-    Layer3 --> Layer4[Lớp 4: Hệ Thống Blacklist Tự Động & Chế Tài Pháp Lý]
-```
-
----
-
-### 7.1. Lớp 1: Xác Thực SIM Viễn Thông Qua OTP Tức Thời (Instant Phone Verification)
-
-Kẻ xấu chỉ có thể nhập số ảo khi hệ thống **không xác minh quyền sở hữu thiết bị/SIM**.
-
-- **Quy trình triển khai**:
-  1. Khi một Shipper nhập số điện thoại lần đầu tiên tại trạm tủ hoặc ứng dụng di động $\rightarrow$ Hệ thống tự động gửi **Mã OTP 4 số** qua SMS Brandname hoặc Zalo ZNS trong **1 - 2 giây**.
-  2. Shipper nhập 4 số OTP để xác thực quyền sở hữu SIM.
-  3. **Tối ưu trải nghiệm không gây phiền hà**:
-     - Shipper **CHỈ CẦN XÁC THỰC OTP 1 LẦN DUY NHẤT** khi bắt đầu ca làm việc hoặc lần đầu tiên đến trạm tủ.
-     - Hệ thống cấp mã `GuestTrustToken` lưu trên thiết bị / Cache Redis với hạn dùng **60 ngày**. Trong suốt 60 ngày tiếp theo, tài xế đến giao tại bất kỳ tủ nào cũng **không cần nhập lại OTP**.
-- **Ý nghĩa an ninh**:
-  - Chặn **100% SĐT rác, SĐT bịa đặt**.
-  - Theo Nghị định 49/2017/NĐ-CP và Luật Viễn thông Việt Nam, mọi thuê bao di động đều được định danh CCCD chính chủ $\rightarrow$ Luôn truy cứu được danh tính người gửi khi có sự cố.
-
----
-
-### 7.2. Lớp 2: Cơ Chế "Khóa Hai Đầu" — Cư Dân Kiểm Soát & Nút Báo Cáo Khẩn Cấp
-
-Kẻ xấu không thể tự ý mở tủ nếu không có **Số điện thoại Cư Dân hợp lệ** được Ban Quản Lý phê duyệt:
-
-1. **Ràng buộc Người Nhận Cư Dân**:
-   - Hệ thống đối soát API `GET /lockers/lookup-receiver`: Bắt buộc số điện thoại người nhận phải là Cư Dân chính thức thuộc tòa nhà. Không hỗ trợ gửi cho người ngoài chung cư.
-2. **Thông Báo Tức Thì Kèm Quyền Khóa Ngăn Tủ (Panic Button)**:
-   - Ngay khi Shipper đóng cửa tủ, Cư Dân nhận được thông báo đẩy (Push Notification) trên ứng dụng:
-     > *"📦 Kiện hàng mới từ Tài xế [0987.xxx.xxx] đã được gửi vào Ngăn #05."*
-   - Kèm nút hành động khẩn cấp: **`[ 🚨 TÔI KHÔNG ĐẶT ĐƠN NÀY / BÁO CÁO ĐƠN LẠ ]`**.
-   - Nếu Cư Dân bấm báo cáo đơn lạ:
-     - Hệ thống **khóa cứng ngay lập tức** Ngăn số 05 (vô hiệu hóa mã OTP nhận hàng).
-     - Đèn LED trên ngăn tủ chuyển sang màu đỏ nhấp nháy, phát còi cảnh báo ngắn.
-     - Phát tín hiệu khẩn cấp đến màn hình giám sát của **Ban Quản Lý và Phòng Trực Bảo Vệ Tòa Nhà**.
-
----
-
-### 7.3. Lớp 3: Bằng Chứng Kỹ Thuật Số & Cảm Biến Vật Lý (CCTV & Dual IoT Sensors)
-
-1. **Camera AI Snapshot (Trích xuất hình ảnh lúc mở tủ)**:
-   - Camera an ninh góc rộng trên nóc trạm tủ tự động chụp lại hình ảnh khuôn mặt của người thực hiện thao tác mở tủ và ghi nhận cùng thời điểm `droppedOffAt`.
-   - Kết hợp hệ thống camera giao thông tại sảnh chung cư ghi nhận biển số xe của tài xế ra vào cổng sảnh.
-2. **Cảm biến kép ngăn tủ (Dual Sensor)**:
-   - **Cảm biến hồng ngoại**: Xác định tài xế có đặt vật thể vào ngăn hay không (chống bấm mở tủ ảo rồi bỏ đi).
-   - **Cảm biến trọng lượng (Weight Sensor)**: Phát hiện các vật thể rỗng (< 20g) hoặc các kiện hàng quá tải trọng cho phép.
-   - **Cảm biến khói/nhiệt độ IoT**: Cảnh báo sớm nếu có nguy cơ cháy nổ từ bên trong ngăn tủ.
-
----
-
-### 7.4. Lớp 4: Hệ Thống Danh Sách Đen (Automated Blacklist) & Chế Tài Pháp Lý
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Attacker as Đối Tượng Phá Hoại / Gian Lận
-    participant Kiosk as Trạm Tủ Smart Locker
-    participant Backend as NestJS Server
-    participant DB as MongoDB (Blacklist)
-    actor Security as Bảo Vệ Tòa Nhà
-    actor Police as Cơ Quan Công An
-
-    Attacker->>Kiosk: Thao tác gửi đồ lạ / Bỏ bom / Quấy rối
-    Note over Kiosk: Camera trạm tủ ghi lại khuôn mặt + Biển số xe
-    Backend->>DB: Ghi nhận SĐT, IP, DeviceID, Snapshot URL
-
-    Note over Backend: Phát hiện gian lận (Cư dân báo cáo hoặc Cảm biến phát hiện)
-    Backend->>DB: Tự động đưa SĐT vào Blacklist (Cấm vĩnh viễn toàn hệ thống)
-    Backend->>Security: Báo động khẩn cấp tới Phòng Bảo Vệ!
-    Security->>Kiosk: Bảo vệ giữ đối tượng tại hiện trường
-
-    alt Vi phạm hình sự (Hàng cấm, chất cháy nổ)
-        Security->>Police: Bàn giao tang vật, trích xuất camera và dữ liệu viễn thông SIM
-        Police->>Attacker: Khởi tố theo Bộ Luật Hình Sự Việt Nam
-    end
-```
-
-1. **Danh Sách Đen Toàn Cầu (Global Blacklist)**:
-   - Thuê bao vi phạm (mở tủ không gửi hàng nhiều lần, bị cư dân báo cáo đơn lạ, spam OTP) sẽ bị đưa vào danh sách đen.
-   - SĐT này sẽ bị **chặn vĩnh viễn** không thể thực hiện gửi hoặc nhận hàng tại bất kỳ trạm tủ nào thuộc hệ thống Smart Locker trên toàn quốc.
-2. **Biển Cảnh Báo Răn Đe Pháp Lý**:
-   - Trên giao diện Kiosk/Mobile luôn có thông báo pháp lý bắt buộc:
-     > *"⚠️ Mọi hành vi gửi chất cấm, chất cháy nổ, phá hoại trạm tủ hoặc quấy rối cư dân đều được hệ thống Camera an ninh và cơ sở dữ liệu viễn thông ghi lại toàn bộ. Ban Quản Lý sẽ chuyển hồ sơ cùng dữ liệu định danh cho Cơ quan Công an xử lý nghiêm theo Pháp luật Việt Nam."*
-   - Hàng rào pháp lý và tâm lý này ngăn chặn hầu hết các hành vi quấy rối bộc phát.
-

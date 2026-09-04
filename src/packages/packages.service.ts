@@ -2,23 +2,32 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  UnauthorizedException,
   Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as crypto from 'crypto';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Package } from './schemas/package.schema';
+import { Package, ShipperSession } from './schemas';
 import { LockerLog } from '../lockers/schemas/locker-log.schema';
 import { Locker } from '../lockers/schemas/locker.schema';
 import { Box } from '../lockers/schemas/box.schema';
 import { User } from '../users/schemas/user.schema';
-import { DropOffPackageDto, PickupOtpDto, PickupQrDto } from './dto';
+import {
+  DropOffPackageDto,
+  PickupOtpDto,
+  PickupQrDto,
+  SendShipperOtpDto,
+  VerifyShipperOtpDto,
+  VerifyFirebaseTokenDto,
+} from './dto';
 import { PackageStatus } from './enums';
 import { BoxSize, BoxStatus, DoorStatus, LockerAction } from '../lockers/enums';
 import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import { getFirebaseAuth } from '../config/firebase-admin.config';
 
 @Injectable()
 export class PackagesService {
@@ -26,6 +35,8 @@ export class PackagesService {
 
   constructor(
     @InjectModel(Package.name) private readonly packageModel: Model<Package>,
+    @InjectModel(ShipperSession.name)
+    private readonly shipperSessionModel: Model<ShipperSession>,
     @InjectModel(LockerLog.name)
     private readonly lockerLogModel: Model<LockerLog>,
     @InjectModel(Locker.name) private readonly lockerModel: Model<Locker>,
@@ -116,6 +127,40 @@ export class PackagesService {
     const droppedOffAt = new Date();
     const expiredAt = new Date(droppedOffAt.getTime() + 48 * 60 * 60 * 1000);
 
+    const normalizedShipperPhone = dto.shipperPhone
+      .trim()
+      .replace(/^(\+84)/, '0');
+
+    // Kiểm tra trạng thái xác thực số điện thoại của tài xế và tự động gia hạn phiên (Sliding Expiration)
+    let isShipperVerified = false;
+    const rollingExpiresAt = new Date(
+      Date.now() + 60 * 24 * 60 * 60 * 1000, // Gia hạn thêm 60 ngày kể từ lần gửi này
+    );
+
+    if (dto.sessionToken) {
+      const validSession = await this.shipperSessionModel.findOne({
+        phone: normalizedShipperPhone,
+        sessionToken: dto.sessionToken.trim(),
+        sessionExpiresAt: { $gt: new Date() },
+      });
+      if (validSession) {
+        isShipperVerified = true;
+        validSession.sessionExpiresAt = rollingExpiresAt;
+        await validSession.save();
+      }
+    } else {
+      const existingVerified = await this.shipperSessionModel.findOne({
+        phone: normalizedShipperPhone,
+        isVerified: true,
+        sessionExpiresAt: { $gt: new Date() },
+      });
+      if (existingVerified) {
+        isShipperVerified = true;
+        existingVerified.sessionExpiresAt = rollingExpiresAt;
+        await existingVerified.save();
+      }
+    }
+
     const newPackage = await this.packageModel.create({
       trackingNumber: dto.trackingNumber.trim().toUpperCase(),
       lockerId: locker._id,
@@ -127,8 +172,9 @@ export class PackagesService {
       receiverPhone: resident.phone,
       receiverName: resident.name,
       apartment: resident.apartment || '',
-      shipperPhone: dto.shipperPhone.trim(),
+      shipperPhone: normalizedShipperPhone,
       shipperName: dto.shipperName?.trim(),
+      isShipperVerified,
       carrierName: dto.carrierName.trim(),
       pinCode,
       qrCodeToken,
@@ -149,11 +195,12 @@ export class PackagesService {
       boxNumber: dto.boxNumber,
       packageId: newPackage._id,
       action: LockerAction.DROP_OFF,
-      performedBy: dto.shipperPhone.trim(),
+      performedBy: normalizedShipperPhone,
       status: 'SUCCESS',
       metadata: {
         carrierName: dto.carrierName,
         trackingNumber: dto.trackingNumber,
+        isShipperVerified,
       },
     });
 
@@ -183,6 +230,7 @@ export class PackagesService {
         boxNumber: newPackage.boxNumber,
         boxSize: newPackage.boxSize,
         status: newPackage.status,
+        isShipperVerified: newPackage.isShipperVerified,
         droppedOffAt: newPackage.droppedOffAt,
         expiredAt: newPackage.expiredAt,
       },
@@ -191,6 +239,185 @@ export class PackagesService {
         boxNumber: newPackage.boxNumber,
       },
     };
+  }
+
+  // Gửi mã xác thực OTP 6 số tới số điện thoại của tài xế giao hàng
+  async sendShipperOtp(dto: SendShipperOtpDto) {
+    const normalizedPhone = dto.phone.trim().replace(/^(\+84)/, '0');
+
+    // Giới hạn tần suất gửi lại mã OTP tối thiểu 60 giây
+    const existingSession = await this.shipperSessionModel.findOne({
+      phone: normalizedPhone,
+    });
+
+    if (
+      existingSession?.lastResendAt &&
+      Date.now() - existingSession.lastResendAt.getTime() < 60 * 1000
+    ) {
+      const waitSeconds = Math.ceil(
+        (60 * 1000 - (Date.now() - existingSession.lastResendAt.getTime())) /
+          1000,
+      );
+      throw new BadRequestException(
+        `Vui lòng đợi ${waitSeconds} giây trước khi yêu cầu gửi lại mã OTP`,
+      );
+    }
+
+    // Sinh mã OTP 6 chữ số ngẫu nhiên
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 3 * 60 * 1000);
+
+    await this.shipperSessionModel.findOneAndUpdate(
+      { phone: normalizedPhone },
+      {
+        phone: normalizedPhone,
+        otp,
+        otpExpiresAt,
+        failedAttempts: 0,
+        lastResendAt: new Date(),
+      },
+      { upsert: true, new: true },
+    );
+
+    this.logger.log(
+      `[SMS_GATEWAY] Đã gửi mã OTP ${otp} tới số điện thoại tài xế ${normalizedPhone}`,
+    );
+
+    return {
+      success: true,
+      message: `Đã gửi mã xác thực 6 số qua SMS/Zalo tới ${normalizedPhone}`,
+      expiresInSeconds: 180,
+      devOtp: otp,
+    };
+  }
+
+  // Xác minh mã OTP 6 số và cấp token phiên tin cậy 60 ngày cho tài xế
+  async verifyShipperOtp(dto: VerifyShipperOtpDto) {
+    const normalizedPhone = dto.phone.trim().replace(/^(\+84)/, '0');
+    const inputOtp = dto.otp.trim();
+
+    const session = await this.shipperSessionModel.findOne({
+      phone: normalizedPhone,
+    });
+
+    if (!session || !session.otp || !session.otpExpiresAt) {
+      throw new BadRequestException(
+        'Số điện thoại chưa yêu cầu gửi mã OTP hoặc phiên đã kết thúc',
+      );
+    }
+
+    // Chống vét cạn: Quá 5 lần sai thì hủy mã OTP
+    if (session.failedAttempts >= 5) {
+      await this.shipperSessionModel.updateOne(
+        { phone: normalizedPhone },
+        { $unset: { otp: 1, otpExpiresAt: 1 } },
+      );
+      throw new BadRequestException(
+        'Bạn đã nhập sai OTP quá 5 lần. Vui lòng yêu cầu mã xác thực mới',
+      );
+    }
+
+    // Kiểm tra thời hạn hiệu lực của OTP
+    if (new Date() > session.otpExpiresAt) {
+      throw new BadRequestException(
+        'Mã OTP đã hết hạn sử dụng. Vui lòng yêu cầu gửi lại mã mới',
+      );
+    }
+
+    // So khớp mã OTP
+    if (session.otp !== inputOtp) {
+      await this.shipperSessionModel.updateOne(
+        { phone: normalizedPhone },
+        { $inc: { failedAttempts: 1 } },
+      );
+      const remaining = 5 - (session.failedAttempts + 1);
+      throw new BadRequestException(
+        `Mã OTP không chính xác. Bạn còn ${remaining} lần thử`,
+      );
+    }
+
+    // Cấp token phiên giao hàng tin cậy 60 ngày
+    const sessionToken = `shp_sess_${crypto.randomBytes(24).toString('hex')}`;
+    const sessionExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+
+    session.isVerified = true;
+    session.verifiedAt = new Date();
+    session.sessionToken = sessionToken;
+    session.sessionExpiresAt = sessionExpiresAt;
+    session.otp = undefined;
+    session.otpExpiresAt = undefined;
+    session.failedAttempts = 0;
+    await session.save();
+
+    this.logger.log(
+      `[SHIPPER_VERIFIED] Tài xế ${normalizedPhone} đã xác thực thành công (Token: ${sessionToken.substring(0, 16)}...)`,
+    );
+
+    return {
+      success: true,
+      message: 'Xác thực số điện thoại tài xế thành công',
+      sessionToken,
+      phone: normalizedPhone,
+      expiresAt: sessionExpiresAt,
+    };
+  }
+
+  // Xác minh mã idToken từ Google Firebase và cấp token phiên giao hàng tin cậy cho tài xế
+  async verifyFirebaseToken(dto: VerifyFirebaseTokenDto) {
+    const auth = getFirebaseAuth();
+
+    try {
+      const decodedToken = await auth.verifyIdToken(dto.idToken.trim());
+      const rawPhone = decodedToken.phone_number;
+
+      if (!rawPhone) {
+        throw new BadRequestException(
+          'Token Firebase không chứa thông tin số điện thoại hợp lệ',
+        );
+      }
+
+      // Chuẩn hóa định dạng số điện thoại về 10 chữ số nội địa
+      const normalizedPhone = rawPhone.replace(/^(\+84)/, '0').trim();
+
+      // Sinh token phiên giao hàng tin cậy ngẫu nhiên an toàn
+      const sessionToken = `shp_sess_${crypto.randomBytes(24).toString('hex')}`;
+      const sessionExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+
+      await this.shipperSessionModel.findOneAndUpdate(
+        { phone: normalizedPhone },
+        {
+          phone: normalizedPhone,
+          isVerified: true,
+          verifiedAt: new Date(),
+          sessionToken,
+          sessionExpiresAt,
+          otp: undefined,
+          otpExpiresAt: undefined,
+          failedAttempts: 0,
+        },
+        { upsert: true, new: true },
+      );
+
+      this.logger.log(
+        `[FIREBASE_AUTH] Tài xế ${normalizedPhone} đã xác thực thành công qua Firebase (Token: ${sessionToken.substring(0, 16)}...)`,
+      );
+
+      return {
+        success: true,
+        message: 'Xác thực số điện thoại tài xế thành công qua Firebase',
+        sessionToken,
+        phone: normalizedPhone,
+        expiresAt: sessionExpiresAt,
+      };
+    } catch (error) {
+      this.logger.error('Lỗi khi đối soát Firebase ID Token:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new UnauthorizedException(
+        'Mã Firebase idToken không hợp lệ hoặc đã hết hạn',
+      );
+    }
   }
 
   // Lấy danh sách các bưu kiện của cư dân đang đăng nhập

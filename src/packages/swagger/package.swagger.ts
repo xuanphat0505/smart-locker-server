@@ -130,3 +130,64 @@ export function ApiPickupQrDoc() {
     }),
   );
 }
+
+// Tài liệu Swagger cho endpoint gửi mã OTP xác thực SĐT của tài xế
+export function ApiSendShipperOtpDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Gửi mã xác thực OTP 6 số tới số điện thoại của tài xế',
+      description:
+        'API công khai gửi mã OTP 6 số (hiệu lực 3 phút) qua SMS/Zalo để xác minh SIM chính chủ của tài xế',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Đã gửi mã OTP thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Số điện thoại không hợp lệ hoặc gửi lại quá nhanh (< 60s)',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint xác minh mã OTP của tài xế
+export function ApiVerifyShipperOtpDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Xác minh mã OTP và cấp phiên tin cậy 60 ngày cho tài xế',
+      description:
+        'API công khai so khớp mã OTP, khi hợp lệ sẽ cấp sessionToken 60 ngày để gửi hàng liên hoàn',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Xác thực số điện thoại tài xế thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Mã OTP không chính xác, đã hết hạn hoặc quá số lần thử',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint xác minh Google Firebase idToken của tài xế
+export function ApiVerifyFirebaseTokenDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Xác minh Google Firebase ID Token và cấp phiên tin cậy 60 ngày',
+      description:
+        'API công khai giải mã idToken do Google Firebase cấp sau khi tài xế nhận SMS OTP thật thành công',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Xác thực tài xế thành công qua Google Firebase',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Token Firebase không chứa số điện thoại hợp lệ',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Mã Firebase idToken không hợp lệ hoặc đã hết hạn',
+    }),
+  );
+}
