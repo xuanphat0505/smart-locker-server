@@ -163,4 +163,11 @@ export class NotificationsGateway
     this.server.to(residentRoom).emit('PACKAGE_NEW', eventPayload);
     this.server.to(buildingRoom).emit('PACKAGE_NEW', eventPayload);
   }
+
+  // Phát sóng thông báo chung tới toàn bộ cư dân và quản trị viên của tòa nhà
+  broadcastToBuilding(buildingId: string, payload: any): void {
+    const roomName = `building_${buildingId}`;
+    this.logger.log(`Phát sự kiện SYSTEM_ANNOUNCEMENT tới phòng: ${roomName}`);
+    this.server.to(roomName).emit('SYSTEM_ANNOUNCEMENT', payload);
+  }
 }
