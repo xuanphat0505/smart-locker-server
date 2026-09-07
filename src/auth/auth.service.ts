@@ -53,7 +53,17 @@ export class AuthService {
       throw new UnauthorizedException('Email hoặc mật khẩu không chính xác');
     }
 
-    return this.sanitizeUser(user);
+    const sanitized = this.sanitizeUser(user);
+    if (user.buildingId) {
+      const building = await this.buildingsService.findById(
+        user.buildingId.toString(),
+      );
+      if (building) {
+        sanitized.buildingName = building.name;
+      }
+    }
+
+    return sanitized;
   }
 
   // Tạo cặp mã Access Token và Refresh Token cho người dùng
@@ -116,6 +126,14 @@ export class AuthService {
 
     await this.updateRefreshTokenHash(userId, tokens.refreshToken);
 
+    let buildingName = user.buildingName;
+    if (!buildingName && user.buildingId) {
+      const building = await this.buildingsService.findById(user.buildingId);
+      if (building) {
+        buildingName = building.name;
+      }
+    }
+
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -126,8 +144,10 @@ export class AuthService {
         phone: user.phone,
         role: user.role,
         buildingId: user.buildingId,
+        buildingName,
         apartment: user.apartment,
         approvalStatus: user.approvalStatus,
+        avatar: user.avatar,
       },
     };
   }

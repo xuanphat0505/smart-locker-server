@@ -1,5 +1,10 @@
 import { applyDecorators } from '@nestjs/common';
-import { ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 
 // Tài liệu Swagger cho endpoint Quản trị viên cấp cao System Admin tạo tài khoản Ban Quản Lý Tòa Nhà
 export function ApiCreateBuildingAdminDoc() {
@@ -223,6 +228,63 @@ export function ApiRemoveUserDoc() {
     ApiResponse({
       status: 404,
       description: 'Không tìm thấy người dùng để xóa',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint tải lên và cập nhật ảnh đại diện người dùng
+export function ApiUploadAvatarDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Tải lên ảnh đại diện cá nhân',
+      description:
+        'Người dùng tải lên tệp tin hình ảnh đại diện (jpeg, png, webp tối đa 5MB) để cập nhật ảnh hồ sơ cá nhân',
+    }),
+    ApiConsumes('multipart/form-data'),
+    ApiBody({
+      schema: {
+        type: 'object',
+        properties: {
+          file: {
+            type: 'string',
+            format: 'binary',
+            description: 'Tệp tin hình ảnh tải lên (định dạng JPG, PNG, WEBP)',
+          },
+        },
+        required: ['file'],
+      },
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Cập nhật ảnh đại diện thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description:
+        'Tệp tin không đúng định dạng ảnh hoặc vượt quá dung lượng cho phép',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc Token hết hạn',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint xóa ảnh đại diện đưa về mặc định
+export function ApiRemoveAvatarDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Xóa ảnh đại diện cá nhân',
+      description:
+        'Xóa ảnh đại diện hiện tại của người dùng và đưa về trạng thái mặc định',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Xóa ảnh đại diện thành công',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc Token hết hạn',
     }),
   );
 }

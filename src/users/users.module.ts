@@ -7,6 +7,7 @@ import { User, UserSchema } from './schemas/user.schema';
 import { BuildingsModule } from '../buildings/buildings.module';
 import { MailModule } from '../mail/mail.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { UploadModule } from '../upload/upload.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     BuildingsModule,
     MailModule,
     NotificationsModule,
+    UploadModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

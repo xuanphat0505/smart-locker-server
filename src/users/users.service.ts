@@ -9,14 +9,19 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
-import { User } from './schemas/user.schema';
+import { User, DEFAULT_AVATAR_URL } from './schemas/user.schema';
 import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
-import { CreateBuildingAdminDto, CreateResidentDto } from './dto';
+import {
+  CreateBuildingAdminDto,
+  CreateResidentDto,
+  UserProfileResponseDto,
+} from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { BuildingsService } from '../buildings/buildings.service';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class UsersService {
@@ -27,6 +32,7 @@ export class UsersService {
     private buildingsService: BuildingsService,
     private mailService: MailService,
     private notificationsService: NotificationsService,
+    private uploadService: UploadService,
   ) {}
 
   // Tạo mới một tài khoản người dùng vào cơ sở dữ liệu
@@ -121,6 +127,41 @@ export class UsersService {
   // Tìm kiếm thông tin người dùng theo mã định danh id
   async findById(id: string): Promise<User | null> {
     return this.userModel.findById(id).select('-password').exec();
+  }
+
+  // Lấy thông tin hồ sơ tài khoản cá nhân kèm chi tiết tên tòa nhà
+  async getProfile(userId: string): Promise<UserProfileResponseDto> {
+    const user = await this.userModel
+      .findById(userId)
+      .select('-password -refreshTokenHash')
+      .populate<{
+        buildingId?: { _id: Types.ObjectId; name: string };
+      }>('buildingId', 'name code address')
+      .lean()
+      .exec();
+
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy tài khoản người dùng');
+    }
+
+    const populatedBuilding = user.buildingId as
+      | { _id?: Types.ObjectId; name?: string }
+      | undefined;
+
+    return {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      buildingId: populatedBuilding?._id
+        ? populatedBuilding._id.toString()
+        : undefined,
+      buildingName: populatedBuilding?.name,
+      apartment: user.apartment,
+      approvalStatus: user.approvalStatus,
+      avatar: user.avatar,
+    };
   }
 
   // Lấy danh sách cư dân đang ở trạng thái chờ xét duyệt của một tòa nhà cụ thể
@@ -319,5 +360,47 @@ export class UsersService {
   // Tìm kiếm thông tin người dùng bao gồm cả mã băm Refresh Token để xác thực
   async findByIdWithRefreshToken(id: string): Promise<User | null> {
     return this.userModel.findById(id).select('-password').exec();
+  }
+
+  // Cập nhật ảnh đại diện người dùng lên máy chủ lưu trữ và dọn dẹp ảnh cũ
+  async updateAvatar(userId: string, file: Express.Multer.File): Promise<User> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy tài khoản người dùng');
+    }
+
+    const uploadResult = await this.uploadService.uploadAvatar(file);
+
+    // Xóa ảnh đại diện cũ trên máy chủ đám mây nếu trước đó người dùng đã có và không phải ảnh mặc định
+    if (user.avatar && user.avatar !== DEFAULT_AVATAR_URL) {
+      await this.uploadService.deleteFile(user.avatar);
+    }
+
+    const updated = await this.userModel
+      .findByIdAndUpdate(userId, { avatar: uploadResult.url }, { new: true })
+      .select('-password')
+      .exec();
+
+    return updated as User;
+  }
+
+  // Xóa ảnh đại diện hiện tại của người dùng và phục hồi trạng thái mặc định
+  async removeAvatar(userId: string): Promise<User> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy tài khoản người dùng');
+    }
+
+    // Xóa tệp ảnh đại diện khỏi máy chủ đám mây nếu không phải là ảnh mặc định
+    if (user.avatar && user.avatar !== DEFAULT_AVATAR_URL) {
+      await this.uploadService.deleteFile(user.avatar);
+    }
+
+    const updated = await this.userModel
+      .findByIdAndUpdate(userId, { avatar: DEFAULT_AVATAR_URL }, { new: true })
+      .select('-password')
+      .exec();
+
+    return updated as User;
   }
 }

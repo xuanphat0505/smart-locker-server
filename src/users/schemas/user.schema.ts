@@ -3,6 +3,10 @@ import { Document, Types, Schema as MongooseSchema } from 'mongoose';
 import { Role } from '../../auth/enums/role.enum';
 import { ApprovalStatus } from '../enums/approval-status.enum';
 
+// Đường dẫn ảnh đại diện mặc định của hệ thống
+export const DEFAULT_AVATAR_URL =
+  'https://res.cloudinary.com/drngsxvb3/image/upload/v1788768429/user-image_kmnk9y.png';
+
 @Schema({ timestamps: true })
 export class User extends Document {
   @Prop({ required: true, trim: true })
@@ -16,6 +20,14 @@ export class User extends Document {
 
   @Prop({ required: true })
   password: string;
+
+  // Ảnh đại diện cá nhân của người dùng
+  @Prop({
+    required: false,
+    trim: true,
+    default: DEFAULT_AVATAR_URL,
+  })
+  avatar: string;
 
   @Prop({ type: String, enum: Role, default: Role.RESIDENT })
   role: Role;

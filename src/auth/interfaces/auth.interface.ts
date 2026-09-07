@@ -20,8 +20,10 @@ export interface SanitizedUser {
   phone: string;
   role: Role;
   buildingId?: string;
+  buildingName?: string;
   apartment?: string;
   approvalStatus: ApprovalStatus;
+  avatar?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -58,7 +60,9 @@ export interface LoginResponse {
     phone: string;
     role: Role;
     buildingId?: string;
+    buildingName?: string;
     apartment?: string;
     approvalStatus: ApprovalStatus;
+    avatar?: string;
   };
 }
