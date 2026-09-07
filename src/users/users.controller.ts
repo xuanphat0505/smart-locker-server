@@ -8,9 +8,14 @@ import {
   Body,
   Request,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  ParseFilePipeBuilder,
+  HttpStatus,
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -23,6 +28,7 @@ import {
   CreateBuildingAdminDto,
   CreateResidentDto,
   RejectResidentDto,
+  UserProfileResponseDto,
 } from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import {
@@ -35,6 +41,8 @@ import {
   ApiFindAllUsersDoc,
   ApiFindOneUserDoc,
   ApiRemoveUserDoc,
+  ApiUploadAvatarDoc,
+  ApiRemoveAvatarDoc,
 } from './swagger/user.swagger';
 
 @ApiTags('Users')
@@ -72,8 +80,53 @@ export class UsersController {
   @ApiGetProfileDoc()
   async getProfile(
     @Request() req: { user: AuthenticatedUser },
-  ): Promise<User | null> {
-    return this.usersService.findById(req.user.userId);
+  ): Promise<UserProfileResponseDto> {
+    return this.usersService.getProfile(req.user.userId);
+  }
+
+  // Tải lên và cập nhật ảnh đại diện cá nhân của người dùng đang đăng nhập
+  @Patch('avatar')
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN, Role.SHIPPER, Role.RESIDENT)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiUploadAvatarDoc()
+  async updateAvatar(
+    @Request() req: { user: AuthenticatedUser },
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({
+          fileType: /(jpg|jpeg|png|webp)$/i,
+        })
+        .addMaxSizeValidator({
+          maxSize: 5 * 1024 * 1024,
+        })
+        .build({
+          errorHttpStatusCode: HttpStatus.BAD_REQUEST,
+        }),
+    )
+    file: Express.Multer.File,
+  ) {
+    const updatedUser = await this.usersService.updateAvatar(
+      req.user.userId,
+      file,
+    );
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Cập nhật ảnh đại diện thành công',
+      avatar: updatedUser.avatar,
+    };
+  }
+
+  // Xóa ảnh đại diện cá nhân của người dùng và phục hồi mặc định
+  @Delete('avatar')
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN, Role.SHIPPER, Role.RESIDENT)
+  @ApiRemoveAvatarDoc()
+  async removeAvatar(@Request() req: { user: AuthenticatedUser }) {
+    const updatedUser = await this.usersService.removeAvatar(req.user.userId);
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Xóa ảnh đại diện thành công',
+      avatar: updatedUser.avatar,
+    };
   }
 
   // Lấy danh sách cư dân đang chờ xét duyệt thuộc tòa nhà của Ban Quản Lý

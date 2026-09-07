@@ -2,10 +2,11 @@
 
 ## 1. Tổng Quan Module
 
-Module `Users` chịu trách nhiệm lưu trữ, quản lý dữ liệu tài khoản và điều phối toàn bộ vòng đời của người dùng trong hệ thống Smart Locker theo mô hình phân quyền chặt chẽ (Multi-tenant Scoped RBAC):
-- Cấp phát tài khoản Ban Quản Lý Tòa Nhà (`POST /users/building-admin`) dành riêng cho `SYSTEM_ADMIN`.
+Module `Users` chịu trách nhiệm lưu trữ, quản lý dữ liệu tài khoản và điều phối toàn bộ vòng đời của người dùng trong hệ sinh thái Smart Locker theo mô hình phân quyền chặt chẽ (Multi-tenant Scoped RBAC):
+- Cấp phát tài khoản Ban Quản Lý Tòa Nhà (`POST /users/building-admin`) dành riêng cho Quản trị viên cấp cao `SYSTEM_ADMIN`.
 - Cung cấp quy trình khởi tạo và xét duyệt hồ sơ cư dân (`resident`, `pending-residents`, `approve`, `reject`) dành riêng cho Ban Quản Lý Tòa Nhà (`BUILDING_ADMIN`).
-- Cung cấp thông tin hồ sơ tài khoản cá nhân (`profile`) cho người dùng đang đăng nhập.
+- Cung cấp thông tin hồ sơ tài khoản cá nhân (`GET /users/profile`) tự động phân giải và đính kèm tên tòa nhà (`buildingName`).
+- Quản lý tải lên và phục hồi ảnh đại diện cá nhân (`PATCH /users/avatar`, `DELETE /users/avatar`) tích hợp lưu trữ đám mây Cloudinary.
 - Cung cấp các tác vụ tra cứu và quản trị người dùng (`findAll`, `findOne`, `remove`) được cô lập dữ liệu theo từng tòa nhà.
 
 ---
@@ -24,15 +25,19 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 | `role` | `String (Enum)` | `enum: Role, default: Role.RESIDENT` | Phân quyền: `SYSTEM_ADMIN`, `BUILDING_ADMIN`, `RESIDENT`, `SHIPPER` |
 | `buildingId` | `Types.ObjectId` | `ref: 'Building', required: false, index: true` | Liên kết đến Tòa nhà cư dân sinh sống hoặc BQL quản lý |
 | `apartment` | `String` | `required: false, trim: true` | Số căn hộ của cư dân (ví dụ: `A1204`, `15B`) |
+| `avatar` | `String` | `required: false, trim: true, default: DEFAULT_AVATAR_URL` | Đường dẫn ảnh đại diện trên Cloudinary hoặc ảnh mặc định hệ thống |
 | `approvalStatus` | `String (Enum)` | `enum: ApprovalStatus, default: PENDING` | Trạng thái hồ sơ: `PENDING`, `ACTIVE`, `REJECTED` |
 | `rejectedReason` | `String` | `required: false, trim: true` | Lý do từ chối hồ sơ nếu trạng thái là `REJECTED` |
 | `approvedAt` | `Date` | `required: false` | Thời điểm Ban Quản Lý phê duyệt hồ sơ |
 | `approvedBy` | `Types.ObjectId` | `ref: 'User', required: false` | Mã định danh của Quản trị viên đã thực hiện phê duyệt |
 | `devicePushToken` | `String` | `required: false, trim: true` | Push token từ thiết bị di động (Expo Push Token) để nhận thông báo |
+| `refreshTokenHash` | `String` | `required: false` | Mã băm của Refresh Token phục vụ xác thực an toàn |
 | `createdAt` | `Date` | `timestamps: true` | Thời gian tạo tài khoản |
 | `updatedAt` | `Date` | `timestamps: true` | Thời gian cập nhật tài khoản gần nhất |
 
-> **Lưu ý:** Hệ thống đã chuyển đổi sang mô hình **Tài Xế Khách Vãng Lai Không Cần Tài Khoản (No-Auth Guest Shipper)**, do đó trường `carrierName` đã được loại bỏ khỏi `User` schema và lưu trực tiếp trên bản ghi `Package`.
+> **Hằng số ảnh đại diện mặc định (`DEFAULT_AVATAR_URL`):**
+> `https://res.cloudinary.com/drngsxvb3/image/upload/v1788768429/user-image_kmnk9y.png`
+> Được áp dụng tự động cho toàn bộ người dùng mới và khi người dùng gỡ bỏ ảnh đại diện.
 
 ### Chỉ Mục Cơ Sở Dữ Liệu (Indexes):
 - `email`: Single Unique Index (Xác thực đăng nhập).
@@ -49,7 +54,9 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
 | Tạo tài khoản Ban Quản Lý | `POST /users/building-admin` | ✅ | ❌ | ❌ | ❌ | Chỉ Super Admin cấp tài khoản BQL |
 | Tạo trực tiếp tài khoản Cư Dân | `POST /users/resident` | ❌ | ✅ | ❌ | ❌ | BQL tạo cư dân cho tòa nhà của mình |
-| Xem thông tin cá nhân | `GET /users/profile` | ✅ | ✅ | ✅ | ✅ | Xem profile chính mình |
+| Xem thông tin cá nhân | `GET /users/profile` | ✅ | ✅ | ✅ | ✅ | Trả về kèm `buildingName` đã phân giải |
+| Tải lên ảnh đại diện | `PATCH /users/avatar` | ✅ | ✅ | ✅ | ✅ | Lưu trữ Cloudinary, tối ưu face crop |
+| Xóa ảnh đại diện | `DELETE /users/avatar` | ✅ | ✅ | ✅ | ✅ | Phục hồi về `DEFAULT_AVATAR_URL` |
 | Xem danh sách cư dân chờ duyệt | `GET /users/pending-residents` | ❌ | ✅ | ❌ | ❌ | BQL xem cư dân PENDING tòa mình |
 | Phê duyệt hồ sơ cư dân | `PATCH /users/:id/approve` | ❌ | ✅ | ❌ | ❌ | BQL duyệt cư dân tòa mình |
 | Từ chối hồ sơ cư dân | `PATCH /users/:id/reject` | ❌ | ✅ | ❌ | ❌ | BQL từ chối cư dân kèm lý do |
@@ -101,11 +108,68 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 - **Endpoint**: `GET /users/profile`
 - **Quyền truy cập**: `Bearer Token` (Tất cả các Role)
 - **Header**: `Authorization: Bearer <accessToken>`
-- **Response (200 OK)**: Trả về thông tin chi tiết đầy đủ của tài khoản đang đăng nhập.
+- **Mô tả**: Tự động thực hiện `.populate('buildingId', 'name code address')` để gắn kèm tên thực tế của Tòa nhà (`buildingName`) vào kết quả trả về.
+- **Response (200 OK)**:
+```json
+{
+  "id": "6543210fedcba9876543210f",
+  "name": "Nguyễn Văn A",
+  "email": "cudan@vinhomes.vn",
+  "phone": "0987654321",
+  "role": "RESIDENT",
+  "buildingId": "6543210fedcba98765432101",
+  "buildingName": "Chung cư Green Park (Tòa A)",
+  "apartment": "A1204",
+  "approvalStatus": "ACTIVE",
+  "avatar": "https://res.cloudinary.com/drngsxvb3/image/upload/v1788768429/user-image_kmnk9y.png",
+  "createdAt": "2026-09-01T08:00:00.000Z",
+  "updatedAt": "2026-09-07T12:00:00.000Z"
+}
+```
 
 ---
 
-### 4.4. Lấy Danh Sách Cư Dân Chờ Duyệt Thuộc Tòa Nhà
+### 4.4. Tải Lên & Cập Nhật Ảnh Đại Diện Cá Nhân
+- **Endpoint**: `PATCH /users/avatar`
+- **Quyền truy cập**: `Bearer Token` (Tất cả các Role)
+- **Header**:
+  - `Authorization: Bearer <accessToken>`
+  - `Content-Type: multipart/form-data`
+- **Body**: Form-data chứa trường `file` (định dạng `jpg|jpeg|png|webp`, dung lượng tối đa 5MB).
+- **Hành vi xử lý**:
+  1. Tải ảnh lên Cloudinary vào thư mục `smart-locker/avatars` kèm thiết lập `crop: fill, gravity: face, width: 300, height: 300`.
+  2. Nếu người dùng đã có ảnh trước đó và khác với `DEFAULT_AVATAR_URL`, tự động xóa ảnh cũ trên Cloudinary để giải phóng dung lượng.
+  3. Cập nhật `avatar` trong CSDL với URL bảo mật (`secure_url`).
+- **Response (200 OK)**:
+```json
+{
+  "statusCode": 200,
+  "message": "Cập nhật ảnh đại diện thành công",
+  "avatar": "https://res.cloudinary.com/drngsxvb3/image/upload/v1788766515/smart-locker/avatars/mhiq1icgu50bv3alpygl.jpg"
+}
+```
+
+---
+
+### 4.5. Xóa Ảnh Đại Diện & Phục Hồi Về Mặc Định
+- **Endpoint**: `DELETE /users/avatar`
+- **Quyền truy cập**: `Bearer Token` (Tất cả các Role)
+- **Header**: `Authorization: Bearer <accessToken>`
+- **Hành vi xử lý**:
+  1. Xóa file ảnh hiện tại khỏi Cloudinary nếu khác với `DEFAULT_AVATAR_URL`.
+  2. Cập nhật lại trường `avatar` của người dùng về `DEFAULT_AVATAR_URL`.
+- **Response (200 OK)**:
+```json
+{
+  "statusCode": 200,
+  "message": "Xóa ảnh đại diện thành công",
+  "avatar": "https://res.cloudinary.com/drngsxvb3/image/upload/v1788768429/user-image_kmnk9y.png"
+}
+```
+
+---
+
+### 4.6. Lấy Danh Sách Cư Dân Chờ Duyệt Thuộc Tòa Nhà
 - **Endpoint**: `GET /users/pending-residents`
 - **Quyền truy cập**: `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
@@ -113,7 +177,7 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 
 ---
 
-### 4.5. Phê Duyệt Hồ Sơ Cư Dân
+### 4.7. Phê Duyệt Hồ Sơ Cư Dân
 - **Endpoint**: `PATCH /users/:id/approve`
 - **Quyền truy cập**: `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
@@ -122,7 +186,7 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 
 ---
 
-### 4.6. Từ Chối Hồ Sơ Cư Dân
+### 4.8. Từ Chối Hồ Sơ Cư Dân
 - **Endpoint**: `PATCH /users/:id/reject`
 - **Quyền truy cập**: `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
@@ -137,7 +201,7 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 
 ---
 
-### 4.7. Lấy Danh Sách Người Dùng (Theo Scope)
+### 4.9. Lấy Danh Sách Người Dùng (Theo Scope)
 - **Endpoint**: `GET /users`
 - **Quyền truy cập**: `SYSTEM_ADMIN`, `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
@@ -147,7 +211,7 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 
 ---
 
-### 4.8. Lấy Chi Tiết Một Người Dùng Theo ID (Có Kiểm Tra Tenant)
+### 4.10. Lấy Chi Tiết Một Người Dùng Theo ID (Có Kiểm Tra Tenant)
 - **Endpoint**: `GET /users/:id`
 - **Quyền truy cập**: `SYSTEM_ADMIN`, `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
@@ -158,7 +222,7 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 
 ---
 
-### 4.9. Xóa Tài Khoản Người Dùng (Có Kiểm Tra Tenant)
+### 4.11. Xóa Tài Khoản Người Dùng (Có Kiểm Tra Tenant)
 - **Endpoint**: `DELETE /users/:id`
 - **Quyền truy cập**: `SYSTEM_ADMIN`, `BUILDING_ADMIN`
 - **Header**: `Authorization: Bearer <accessToken>`
@@ -174,9 +238,12 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 1. **Cô lập dữ liệu Tòa Nhà (Tenant Data Isolation)**:
    - Tất cả các thao tác của Ban Quản Lý đều được gắn chặt với `req.user.buildingId` trích xuất từ Token ký bảo mật, ngăn chặn tuyệt đối việc can thiệp trái phép vào dữ liệu chung cư khác.
 2. **Thứ tự định tuyến (Routing Order)**:
-   - Các route tĩnh (`GET /users/profile`, `GET /users/pending-residents`) luôn được khai báo trước các route động (`GET /users/:id`, `PATCH /users/:id/approve`) để tránh lỗi MongoDB CastError.
-3. **Ẩn mật khẩu tuyệt đối**:
-   - Tất cả các phương thức truy vấn đều gắn `.select('-password')`.
-4. **Đánh chỉ mục (Indexing)**:
+   - Các route tĩnh (`GET /users/profile`, `PATCH /users/avatar`, `DELETE /users/avatar`, `GET /users/pending-residents`) luôn được khai báo **trước** các route động mang param (`GET /users/:id`, `PATCH /users/:id/approve`, `DELETE /users/:id`) để tránh tình trạng NestJS hiểu nhầm `'avatar'` hay `'profile'` là param `:id`.
+3. **Quản lý lưu trữ đám mây Cloudinary**:
+   - Khi cập nhật hoặc xóa avatar, hệ thống luôn kiểm tra `user.avatar !== DEFAULT_AVATAR_URL` trước khi gọi Cloudinary SDK để không vô tình xóa ảnh mặc định dùng chung.
+   - Thao tác xóa file đám mây được bọc try/catch an toàn, không làm ngắt quãng luồng cập nhật cơ sở dữ liệu nếu xảy ra sự cố mạng với Cloudinary.
+4. **Ẩn mật khẩu và mã băm Token tuyệt đối**:
+   - Tất cả các phương thức truy vấn hồ sơ đều gắn `.select('-password -refreshTokenHash')`.
+5. **Đánh chỉ mục (Indexing)**:
    - `email` và `phone` được đánh unique index.
    - `buildingId` được đánh index để tối ưu hóa truy vấn cư dân theo từng tòa nhà.

@@ -41,6 +41,14 @@ export class BaseUserDto {
   @IsString({ message: 'Mật khẩu phải là chuỗi ký tự' })
   @MinLength(8, { message: 'Mật khẩu phải có tối thiểu 8 ký tự' })
   password: string;
+
+  @ApiProperty({
+    example:
+      'https://res.cloudinary.com/demo/image/upload/v1/smart-locker/avatars/user.jpg',
+    description: 'Đường dẫn ảnh đại diện cá nhân',
+    required: false,
+  })
+  avatar?: string;
 }
 
 // DTO khởi tạo tài khoản Ban Quản Lý Tòa Nhà do System Admin thực hiện
@@ -77,4 +85,63 @@ export class RejectResidentDto {
   @IsString({ message: 'Lý do từ chối phải là chuỗi ký tự' })
   @IsNotEmpty({ message: 'Lý do từ chối không được để trống' })
   reason: string;
+}
+
+// DTO phản hồi kết quả sau khi cập nhật ảnh đại diện người dùng
+export class UploadAvatarResponseDto {
+  @ApiProperty({
+    example:
+      'https://res.cloudinary.com/demo/image/upload/v1/smart-locker/avatars/user.jpg',
+    description: 'Đường dẫn ảnh đại diện mới sau khi tải lên thành công',
+  })
+  avatar: string;
+
+  @ApiProperty({
+    example: 'Cập nhật ảnh đại diện thành công',
+    description: 'Thông báo kết quả thực hiện',
+  })
+  message: string;
+}
+
+// DTO phản hồi thông tin hồ sơ tài khoản cá nhân kèm tên tòa nhà
+export class UserProfileResponseDto {
+  @ApiProperty({ example: '6543210fedcba9876543210f' })
+  id: string;
+
+  @ApiProperty({ example: 'Nguyễn Văn A' })
+  name: string;
+
+  @ApiProperty({ example: 'user@smartlocker.vn' })
+  email: string;
+
+  @ApiProperty({ example: '0912345678' })
+  phone: string;
+
+  @ApiProperty({ example: 'RESIDENT' })
+  role: string;
+
+  @ApiProperty({ example: '6543210fedcba98765432101', required: false })
+  buildingId?: string;
+
+  @ApiProperty({ example: 'Chung cư Green Park (Tòa A)', required: false })
+  buildingName?: string;
+
+  @ApiProperty({ example: 'A1204', required: false })
+  apartment?: string;
+
+  @ApiProperty({ example: 'ACTIVE' })
+  approvalStatus: string;
+
+  @ApiProperty({
+    example:
+      'https://res.cloudinary.com/demo/image/upload/v1/smart-locker/avatars/user.jpg',
+    required: false,
+  })
+  avatar?: string;
+
+  @ApiProperty({ required: false })
+  createdAt?: Date;
+
+  @ApiProperty({ required: false })
+  updatedAt?: Date;
 }
