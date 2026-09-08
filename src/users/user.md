@@ -32,6 +32,9 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 | `approvedBy` | `Types.ObjectId` | `ref: 'User', required: false` | Mã định danh của Quản trị viên đã thực hiện phê duyệt |
 | `devicePushToken` | `String` | `required: false, trim: true` | Push token từ thiết bị di động (Expo Push Token) để nhận thông báo |
 | `refreshTokenHash` | `String` | `required: false` | Mã băm của Refresh Token phục vụ xác thực an toàn |
+| `resetPasswordOtp` | `String` | `required: false` | Mã băm SHA-256 của mã OTP 6 số phục vụ đặt lại mật khẩu |
+| `resetPasswordOtpExpires` | `Date` | `required: false` | Thời điểm hết hạn của mã OTP đặt lại mật khẩu (hiệu lực 10 phút) |
+| `lastResetPasswordRequestedAt` | `Date` | `required: false` | Thời điểm yêu cầu gửi mã OTP gần nhất (áp dụng rate-limit 60 giây) |
 | `createdAt` | `Date` | `timestamps: true` | Thời gian tạo tài khoản |
 | `updatedAt` | `Date` | `timestamps: true` | Thời gian cập nhật tài khoản gần nhất |
 
@@ -247,3 +250,11 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 5. **Đánh chỉ mục (Indexing)**:
    - `email` và `phone` được đánh unique index.
    - `buildingId` được đánh index để tối ưu hóa truy vấn cư dân theo từng tòa nhà.
+6. **Bảo mật mã OTP khôi phục mật khẩu (OTP Security)**:
+   - Không lưu mã OTP dưới dạng văn bản thô (plain-text); mã 6 số được băm bằng thuật toán một chiều `SHA-256` trước khi lưu vào trường `resetPasswordOtp`.
+   - Giới hạn thời gian hiệu lực chính xác trong 10 phút (`resetPasswordOtpExpires`).
+   - Ngay sau khi hoàn tất đặt lại mật khẩu, mã OTP và thời hạn hết hạn lập tức bị xóa bỏ (`undefined`) để tránh tấn công phát lại (Replay Attacks).
+   - Áp dụng kiểm tra giãn cách thời gian (`lastResetPasswordRequestedAt`): Người dùng bắt buộc chờ tối thiểu 60 giây giữa hai lần yêu cầu liên tiếp.
+7. **Chính sách mật khẩu (Password Policy)**:
+   - Mật khẩu lưu trữ luôn được băm qua thuật toán `bcrypt` với muối chuẩn `10 rounds`.
+   - Mật khẩu mới bắt buộc có độ dài tối thiểu 8 ký tự (`@MinLength(8)`), đồng bộ với tiêu chuẩn kiểm tra độ mạnh mật khẩu phía ứng dụng di động.

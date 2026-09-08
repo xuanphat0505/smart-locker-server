@@ -288,3 +288,27 @@ export function ApiRemoveAvatarDoc() {
     }),
   );
 }
+
+// Tài liệu Swagger cho endpoint đổi mật khẩu tài khoản cá nhân
+export function ApiChangePasswordDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Đổi mật khẩu tài khoản cá nhân',
+      description:
+        'Người dùng đang đăng nhập tự thay đổi mật khẩu hiện tại và hủy toàn bộ phiên đăng nhập cũ trên các thiết bị khác',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Đổi mật khẩu thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description:
+        'Mật khẩu hiện tại không chính xác hoặc mật khẩu mới trùng với mật khẩu cũ',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+  );
+}

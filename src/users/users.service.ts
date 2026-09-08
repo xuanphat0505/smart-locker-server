@@ -16,6 +16,7 @@ import {
   CreateBuildingAdminDto,
   CreateResidentDto,
   UserProfileResponseDto,
+  ChangePasswordDto,
 } from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { BuildingsService } from '../buildings/buildings.service';
@@ -219,15 +220,17 @@ export class UsersService {
       const isApproved = status === ApprovalStatus.ACTIVE;
 
       // 1. Phát sự kiện thông báo kết quả phê duyệt qua NotificationsService
-      this.notificationsService.notifyResidentApprovalResult(
-        buildingIdStr,
-        String(updated._id),
-        {
+      this.notificationsService
+        .notifyResidentApprovalResult(buildingIdStr, String(updated._id), {
           status: isApproved ? 'ACTIVE' : 'REJECTED',
           apartment: updated.apartment,
           reason: rejectedReason,
-        },
-      );
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Lỗi khi phát thông báo duyệt cư dân: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
 
       // 2. Gửi Email thông báo kết quả chính thức cho Cư Dân
       if (updated.email) {
@@ -349,6 +352,33 @@ export class UsersService {
     throw new ForbiddenException('Không có quyền thực hiện thao tác này');
   }
 
+  // Thực hiện đổi mật khẩu cá nhân cho người dùng đang đăng nhập và hủy các phiên refresh token cũ
+  async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy tài khoản người dùng');
+    }
+
+    const isMatch = await bcrypt.compare(dto.currentPassword, user.password);
+    if (!isMatch) {
+      throw new BadRequestException('Mật khẩu hiện tại không chính xác');
+    }
+
+    if (dto.newPassword === dto.currentPassword) {
+      throw new BadRequestException(
+        'Mật khẩu mới không được trùng với mật khẩu cũ',
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        password: hashedPassword,
+        refreshTokenHash: null,
+      })
+      .exec();
+  }
+
   // Cập nhật mã băm Refresh Token của người dùng vào cơ sở dữ liệu
   async updateRefreshTokenHash(
     userId: string,
@@ -402,5 +432,37 @@ export class UsersService {
       .exec();
 
     return updated as User;
+  }
+
+  // Lưu mã băm OTP đặt lại mật khẩu và thời gian hết hạn vào cơ sở dữ liệu
+  async setResetPasswordOtp(
+    userId: string,
+    hashedOtp: string,
+    expires: Date,
+  ): Promise<void> {
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        resetPasswordOtp: hashedOtp,
+        resetPasswordOtpExpires: expires,
+        lastResetPasswordRequestedAt: new Date(),
+      })
+      .exec();
+  }
+
+  // Cập nhật mật khẩu mới và dọn dẹp các trường OTP đặt lại mật khẩu
+  async updatePasswordAndClearResetOtp(
+    userId: string,
+    newPasswordHash: string,
+  ): Promise<void> {
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        password: newPasswordHash,
+        refreshTokenHash: null,
+        $unset: {
+          resetPasswordOtp: 1,
+          resetPasswordOtpExpires: 1,
+        },
+      })
+      .exec();
   }
 }

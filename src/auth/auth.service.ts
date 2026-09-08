@@ -2,8 +2,10 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -20,6 +22,8 @@ import {
   RegisterResidentDto,
   RegisterShipperDto,
   RefreshTokenDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
 } from './dto';
 import { Role } from './enums/role.enum';
 import { User } from '../users/schemas/user.schema';
@@ -326,6 +330,98 @@ export class AuthService {
     await this.updateRefreshTokenHash(user._id.toString(), tokens.refreshToken);
 
     return tokens;
+  }
+
+  // Tiếp nhận yêu cầu quên mật khẩu, sinh mã OTP 6 chữ số băm SHA-256 và gửi email cho người dùng
+  async forgotPassword(
+    dto: ForgotPasswordDto,
+  ): Promise<{ statusCode: number; message: string }> {
+    const genericResponse = {
+      statusCode: 200,
+      message:
+        'Nếu email tồn tại trên hệ thống, mã xác thực OTP đã được gửi đến hộp thư của bạn.',
+    };
+
+    const user = await this.usersService.findByEmail(dto.email);
+    if (!user) {
+      return genericResponse;
+    }
+
+    if (user.lastResetPasswordRequestedAt) {
+      const diffSeconds = Math.floor(
+        (Date.now() - new Date(user.lastResetPasswordRequestedAt).getTime()) /
+          1000,
+      );
+      if (diffSeconds < 60) {
+        throw new BadRequestException(
+          `Vui lòng đợi thêm ${60 - diffSeconds} giây trước khi gửi lại yêu cầu`,
+        );
+      }
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedOtp = crypto
+      .createHash('sha256')
+      .update(otp)
+      .digest('hex');
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
+
+    await this.usersService.setResetPasswordOtp(
+      user._id.toString(),
+      hashedOtp,
+      expires,
+    );
+
+    this.mailService
+      .sendResetPasswordOtp(user.email, user.name, otp)
+      .catch((err) => {
+        this.logger.error(
+          `Lỗi khi gửi email mã OTP đặt lại mật khẩu: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+
+    return genericResponse;
+  }
+
+  // Xác thực mã OTP và cập nhật mật khẩu mới cho tài khoản người dùng
+  async resetPassword(
+    dto: ResetPasswordDto,
+  ): Promise<{ statusCode: number; message: string }> {
+    const user = await this.usersService.findByEmail(dto.email);
+    if (!user || !user.resetPasswordOtp || !user.resetPasswordOtpExpires) {
+      throw new BadRequestException(
+        'Yêu cầu đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
+      );
+    }
+
+    if (new Date() > new Date(user.resetPasswordOtpExpires)) {
+      throw new BadRequestException(
+        'Mã OTP đã hết hạn. Vui lòng gửi lại yêu cầu mới',
+      );
+    }
+
+    const hashedOtp = crypto
+      .createHash('sha256')
+      .update(dto.otp)
+      .digest('hex');
+
+    if (hashedOtp !== user.resetPasswordOtp) {
+      throw new BadRequestException(
+        'Mã OTP không chính xác. Vui lòng kiểm tra lại',
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
+    await this.usersService.updatePasswordAndClearResetOtp(
+      user._id.toString(),
+      hashedPassword,
+    );
+
+    return {
+      statusCode: 200,
+      message:
+        'Đặt lại mật khẩu thành công. Bạn đã có thể đăng nhập bằng mật khẩu mới.',
+    };
   }
 
   // Đăng xuất và xóa mã băm Refresh Token trong cơ sở dữ liệu

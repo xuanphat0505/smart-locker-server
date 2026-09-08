@@ -29,6 +29,7 @@ import {
   CreateResidentDto,
   RejectResidentDto,
   UserProfileResponseDto,
+  ChangePasswordDto,
 } from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import {
@@ -43,6 +44,7 @@ import {
   ApiRemoveUserDoc,
   ApiUploadAvatarDoc,
   ApiRemoveAvatarDoc,
+  ApiChangePasswordDoc,
 } from './swagger/user.swagger';
 
 @ApiTags('Users')
@@ -82,6 +84,22 @@ export class UsersController {
     @Request() req: { user: AuthenticatedUser },
   ): Promise<UserProfileResponseDto> {
     return this.usersService.getProfile(req.user.userId);
+  }
+
+  // Đổi mật khẩu tài khoản cá nhân của người dùng đang đăng nhập
+  @Patch('me/password')
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN, Role.SHIPPER, Role.RESIDENT)
+  @ApiChangePasswordDoc()
+  async changePassword(
+    @Request() req: { user: AuthenticatedUser },
+    @Body() dto: ChangePasswordDto,
+  ) {
+    await this.usersService.changePassword(req.user.userId, dto);
+    return {
+      statusCode: HttpStatus.OK,
+      message:
+        'Đổi mật khẩu thành công. Vui lòng đăng nhập lại trên các thiết bị khác.',
+    };
   }
 
   // Tải lên và cập nhật ảnh đại diện cá nhân của người dùng đang đăng nhập

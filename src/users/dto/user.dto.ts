@@ -145,3 +145,23 @@ export class UserProfileResponseDto {
   @ApiProperty({ required: false })
   updatedAt?: Date;
 }
+
+// DTO yêu cầu thay đổi mật khẩu tài khoản cá nhân của người dùng đang đăng nhập
+export class ChangePasswordDto {
+  @ApiProperty({
+    example: 'OldPassword@123',
+    description: 'Mật khẩu hiện tại của tài khoản',
+  })
+  @IsString({ message: 'Mật khẩu hiện tại phải là chuỗi ký tự' })
+  @IsNotEmpty({ message: 'Mật khẩu hiện tại không được để trống' })
+  currentPassword: string;
+
+  @ApiProperty({
+    example: 'NewSecurePassword@456',
+    description: 'Mật khẩu mới thay thế, tối thiểu 8 ký tự',
+    minLength: 8,
+  })
+  @IsString({ message: 'Mật khẩu mới phải là chuỗi ký tự' })
+  @MinLength(8, { message: 'Mật khẩu mới phải có tối thiểu 8 ký tự' })
+  newPassword: string;
+}
