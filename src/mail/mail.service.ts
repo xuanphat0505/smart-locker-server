@@ -186,6 +186,52 @@ export class MailService {
     return this.sendMail(residentEmail, subject, htmlContent);
   }
 
+  // Gửi email chứa mã OTP xác thực đặt lại mật khẩu cho người dùng
+  async sendResetPasswordOtp(
+    email: string,
+    name: string,
+    otp: string,
+  ): Promise<boolean> {
+    const subject = `[SMART LOCKER] Mã xác thực OTP đặt lại mật khẩu: ${otp}`;
+
+    const htmlContent = `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #14161B; border-radius: 12px; overflow: hidden; border: 1px solid #2B2F3A; color: #FFFFFF;">
+        <div style="background: linear-gradient(135deg, #FF6B00 0%, #FF8533 100%); padding: 24px; text-align: center;">
+          <h1 style="margin: 0; font-size: 22px; color: #FFFFFF; letter-spacing: 0.5px;">SMART LOCKER</h1>
+          <p style="margin: 4px 0 0 0; font-size: 13px; color: rgba(255,255,255,0.9);">Khôi Phục Quyền Truy Cập Tài Khoản</p>
+        </div>
+        
+        <div style="padding: 28px 24px;">
+          <h2 style="font-size: 18px; margin-top: 0; color: #FF8533;">Mã Xác Thực Đặt Lại Mật Khẩu</h2>
+          <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
+            Xin chào <strong>${name}</strong>,<br/>
+            Hệ thống Smart Locker nhận được yêu cầu đặt lại mật khẩu cho tài khoản liên kết với địa chỉ email này.
+          </p>
+          
+          <div style="background-color: #1B1E26; border: 1px solid #FF6B00; border-radius: 12px; padding: 24px; text-align: center; margin: 24px 0;">
+            <p style="color: #A0A5B5; font-size: 12px; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 1px;">Mã xác thực OTP của bạn</p>
+            <div style="font-size: 38px; font-weight: 800; letter-spacing: 10px; color: #FF6B00; font-family: Consolas, 'Courier New', monospace;">${otp}</div>
+            <p style="color: #72798E; font-size: 12px; margin: 12px 0 0 0;">Mã có hiệu lực trong vòng <strong>10 phút</strong> và chỉ sử dụng được <strong>01 lần duy nhất</strong>.</p>
+          </div>
+
+          <p style="font-size: 13px; line-height: 20px; color: #A0A5B5;">
+            Vui lòng nhập mã OTP trên vào ứng dụng di động Smart Locker để hoàn tất việc thiết lập mật khẩu mới.
+          </p>
+
+          <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #2B2F3A; font-size: 12px; color: #72798E; line-height: 18px;">
+            ⚠️ Nếu bạn không gửi yêu cầu này, vui lòng bỏ qua email hoặc đổi mật khẩu ngay nếu nghi ngờ tài khoản bị xâm nhập. Tuyệt đối không chia sẻ mã này cho bất kỳ ai.
+          </div>
+        </div>
+        
+        <div style="background-color: #0F1015; padding: 16px 24px; text-align: center; font-size: 12px; color: #72798E; border-top: 1px solid #2B2F3A;">
+          Email tự động từ Hệ thống Smart Locker. Vui lòng không trả lời thư này.
+        </div>
+      </div>
+    `;
+
+    return this.sendMail(email, subject, htmlContent);
+  }
+
   // Phương thức phụ trợ thực hiện gửi thư qua Nodemailer với xử lý lỗi an toàn
   private async sendMail(
     to: string | string[],

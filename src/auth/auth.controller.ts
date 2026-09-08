@@ -1,4 +1,10 @@
-import { Controller, Request, Post, UseGuards, Body } from '@nestjs/common';
+import {
+  Controller,
+  Request,
+  Post,
+  UseGuards,
+  Body,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -7,6 +13,8 @@ import {
   RegisterResidentDto,
   RegisterShipperDto,
   RefreshTokenDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
 } from './dto';
 import type {
   LoginResponse,
@@ -21,6 +29,8 @@ import {
   ApiLoginDoc,
   ApiRefreshTokenDoc,
   ApiLogoutDoc,
+  ApiForgotPasswordDoc,
+  ApiResetPasswordDoc,
 } from './swagger/auth.swagger';
 
 @ApiTags('Auth')
@@ -69,5 +79,23 @@ export class AuthController {
     @Request() req: { user: AuthenticatedUser },
   ): Promise<{ message: string }> {
     return this.authService.logout(req.user.userId);
+  }
+
+  // Tiếp nhận yêu cầu quên mật khẩu và gửi email chứa mã OTP
+  @Post('forgot-password')
+  @ApiForgotPasswordDoc()
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+  ): Promise<{ statusCode: number; message: string }> {
+    return this.authService.forgotPassword(dto);
+  }
+
+  // Đặt lại mật khẩu mới cho tài khoản thông qua mã OTP xác thực
+  @Post('reset-password')
+  @ApiResetPasswordDoc()
+  async resetPassword(
+    @Body() dto: ResetPasswordDto,
+  ): Promise<{ statusCode: number; message: string }> {
+    return this.authService.resetPassword(dto);
   }
 }

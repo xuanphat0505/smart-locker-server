@@ -5,8 +5,12 @@ import {
   ApiBody,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { LoginDto } from '../dto/login.dto';
-import { RefreshTokenDto } from '../dto/refresh-token.dto';
+import {
+  LoginDto,
+  RefreshTokenDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
+} from '../dto';
 
 // Tài liệu Swagger cho endpoint đăng ký Cư Dân
 export function ApiRegisterResidentDoc() {
@@ -104,6 +108,48 @@ export function ApiLogoutDoc() {
     ApiResponse({
       status: 401,
       description: 'Chưa xác thực hoặc token không hợp lệ',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint yêu cầu gửi liên kết đặt lại mật khẩu
+export function ApiForgotPasswordDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Yêu cầu gửi liên kết đặt lại mật khẩu qua email',
+      description:
+        'Người dùng cung cấp email để nhận liên kết chứa mã token bảo mật phục vụ đặt lại mật khẩu',
+    }),
+    ApiBody({ type: ForgotPasswordDto }),
+    ApiResponse({
+      status: 200,
+      description:
+        'Nếu email tồn tại trên hệ thống, liên kết đặt lại mật khẩu đã được gửi đến hộp thư',
+    }),
+    ApiResponse({
+      status: 400,
+      description:
+        'Yêu cầu gửi quá nhanh (cooldown 60 giây) hoặc email không hợp lệ',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint đặt lại mật khẩu mới bằng mã OTP
+export function ApiResetPasswordDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Đặt lại mật khẩu mới thông qua mã xác thực OTP',
+      description:
+        'Xác thực mã OTP 6 chữ số gửi qua email và cập nhật mật khẩu mới cho tài khoản, đồng thời hủy các phiên đăng nhập cũ',
+    }),
+    ApiBody({ type: ResetPasswordDto }),
+    ApiResponse({
+      status: 200,
+      description: 'Đặt lại mật khẩu thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Mã OTP không hợp lệ, đã hết hạn hoặc mật khẩu không đạt yêu cầu bảo mật',
     }),
   );
 }

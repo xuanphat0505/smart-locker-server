@@ -72,6 +72,18 @@ export class User extends Document {
   // Mã băm của Refresh Token
   @Prop({ required: false })
   refreshTokenHash?: string;
+
+  // Mã băm SHA-256 của mã OTP đặt lại mật khẩu
+  @Prop({ required: false })
+  resetPasswordOtp?: string;
+
+  // Thời điểm hết hạn của mã OTP đặt lại mật khẩu
+  @Prop({ required: false })
+  resetPasswordOtpExpires?: Date;
+
+  // Thời điểm gửi yêu cầu đặt lại mật khẩu gần nhất để limit tần suất gửi
+  @Prop({ required: false })
+  lastResetPasswordRequestedAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

@@ -8,6 +8,7 @@ Module `Auth` đóng vai trò là cổng xác thực trung tâm (Authentication 
 - Đăng ký tài khoản Tài Xế Giao Hàng (`SHIPPER`) gắn với Đơn Vị Vận Chuyển.
 - Đăng nhập xác thực bằng Email / Password qua `LocalStrategy` và cấp phát cặp mã `JWT Access Token` (15 phút) & `Refresh Token` (7 ngày).
 - Cấp lại Access Token mới qua cơ chế xoay vòng token (**Refresh Token Rotation**) tại endpoint `POST /auth/refresh-token`.
+- Khôi phục mật khẩu an toàn qua mã OTP gửi về Email (`POST /auth/forgot-password`) và xác thực đổi mật khẩu mới (`POST /auth/reset-password`).
 - Đăng xuất an toàn và thu hồi token tại `POST /auth/logout`.
 
 ---
@@ -107,6 +108,52 @@ sequenceDiagram
         Client->>Client: Cập nhật SecureStore
     else Token giả mạo hoặc đã bị thu hồi
         AuthSvc-->>Client: 401 Unauthorized (Bắt buộc đăng nhập lại)
+    end
+```
+
+---
+
+### 4.3. Quy Trình Quên Mật Khẩu & Đặt Lại Mật Khẩu Qua Mã OTP
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as Ứng Dụng (Mobile / Web)
+    participant AuthCtrl as AuthController
+    participant AuthSvc as AuthService
+    participant MailSvc as MailService
+    participant DB as MongoDB
+
+    Note over Client, DB: Giai đoạn 1: Tiếp nhận yêu cầu & gửi OTP qua Email
+    Client->>AuthCtrl: POST /auth/forgot-password { email }
+    AuthCtrl->>AuthSvc: forgotPassword(dto)
+    AuthSvc->>DB: Tìm User theo email
+    alt User tồn tại trong hệ thống
+        alt Gửi lại quá nhanh (< 60 giây)
+            AuthSvc-->>Client: 400 Bad Request ("Vui lòng đợi thêm X giây...")
+        else Đủ điều kiện gửi
+            AuthSvc->>AuthSvc: Sinh ngẫu nhiên mã OTP 6 chữ số
+            AuthSvc->>AuthSvc: Băm SHA-256(otp) & tính thời hạn 10 phút
+            AuthSvc->>DB: Cập nhật resetPasswordOtp, resetPasswordOtpExpires, lastResetPasswordRequestedAt
+            AuthSvc->>MailSvc: Gửi email chứa mã OTP đến hộp thư người dùng
+            AuthSvc-->>Client: 200 OK (Generic message phòng chống lộ danh tính email)
+        end
+    else Email không tồn tại
+        AuthSvc-->>Client: 200 OK (Phản hồi chung bảo mật, không báo lỗi)
+    end
+
+    Note over Client, DB: Giai đoạn 2: Xác thực mã OTP & Cập nhật mật khẩu mới
+    Client->>AuthCtrl: POST /auth/reset-password { email, otp, newPassword }
+    AuthCtrl->>AuthSvc: resetPassword(dto)
+    AuthSvc->>DB: Tìm User theo email
+    alt User không có mã OTP hoặc mã đã hết hạn (> 10 phút)
+        AuthSvc-->>Client: 400 Bad Request ("Mã OTP đã hết hạn...")
+    else Kiểm tra mã băm SHA-256(dto.otp) không khớp
+        AuthSvc-->>Client: 400 Bad Request ("Mã OTP không chính xác...")
+    else Mã OTP chính xác và còn hạn
+        AuthSvc->>AuthSvc: bcrypt.hash(newPassword, 10)
+        AuthSvc->>DB: Cập nhật password mới & xóa bỏ resetPasswordOtp, resetPasswordOtpExpires
+        AuthSvc-->>Client: 200 OK ("Đặt lại mật khẩu thành công...")
     end
 ```
 
@@ -254,3 +301,103 @@ sequenceDiagram
   "message": "Đăng xuất tài khoản thành công"
 }
 ```
+
+---
+
+### 5.6. Yêu Cầu Quên Mật Khẩu (Forgot Password)
+
+- **Endpoint**: `POST /auth/forgot-password`
+- **Quyền truy cập**: Public
+- **Request Body**:
+
+```json
+{
+  "email": "nguyenvana@gmail.com"
+}
+```
+
+- **Hành vi xử lý**:
+  1. Kiểm tra địa chỉ email trong hệ thống.
+  2. Nếu email tồn tại và khoảng cách giữa 2 lần yêu cầu $\ge$ 60 giây:
+     - Sinh mã OTP 6 số ngẫu nhiên (`100000` – `999999`).
+     - Băm mã OTP bằng `SHA-256` và lưu vào `resetPasswordOtp`.
+     - Thiết lập thời gian hết hạn sau 10 phút (`resetPasswordOtpExpires`).
+     - Gửi email chứa mã OTP đến địa chỉ email của người dùng.
+  3. Nếu yêu cầu gửi lại trong vòng 60 giây, trả về lỗi `400 Bad Request`.
+  4. Nếu email không tồn tại trong hệ thống, vẫn trả về phản hồi thành công `200 OK` giống hệt (Cơ chế chống lộ danh tính người dùng - Email Enumeration Protection).
+
+- **Response Thành Công (200 OK)**:
+
+```json
+{
+  "statusCode": 200,
+  "message": "Nếu email tồn tại trên hệ thống, mã xác thực OTP đã được gửi đến hộp thư của bạn."
+}
+```
+
+- **Response Lỗi Giới Hạn Tần Suất (400 Bad Request)**:
+
+```json
+{
+  "statusCode": 400,
+  "message": "Vui lòng đợi thêm 47 giây trước khi gửi lại yêu cầu",
+  "error": "Bad Request"
+}
+```
+
+---
+
+### 5.7. Xác Thực OTP & Đặt Lại Mật Khẩu Mới (Reset Password)
+
+- **Endpoint**: `POST /auth/reset-password`
+- **Quyền truy cập**: Public
+- **Request Body**:
+
+```json
+{
+  "email": "nguyenvana@gmail.com",
+  "otp": "849201",
+  "newPassword": "NewSecurePassword@123"
+}
+```
+
+- **Ràng buộc dữ liệu (Validation Rules)**:
+  - `email`: Bắt buộc, đúng định dạng email.
+  - `otp`: Bắt buộc, chuỗi số đúng 6 ký tự.
+  - `newPassword`: Bắt buộc, độ dài tối thiểu 8 ký tự (`@MinLength(8)`).
+
+- **Hành vi xử lý**:
+  1. Tìm tài khoản người dùng theo email.
+  2. Kiểm tra mã OTP: Bắt buộc tồn tại và thời điểm hiện tại chưa vượt quá `resetPasswordOtpExpires`.
+  3. Băm mã OTP gửi lên bằng `SHA-256` và so sánh với `resetPasswordOtp` trong CSDL.
+  4. Băm mật khẩu mới bằng `bcrypt.hash(newPassword, 10)`.
+  5. Cập nhật `password` mới, đồng thời xóa bỏ hoàn toàn `resetPasswordOtp` và `resetPasswordOtpExpires` (ngăn chặn tái sử dụng mã).
+
+- **Response Thành Công (200 OK)**:
+
+```json
+{
+  "statusCode": 200,
+  "message": "Đặt lại mật khẩu thành công. Bạn đã có thể đăng nhập bằng mật khẩu mới."
+}
+```
+
+- **Response Lỗi (400 Bad Request)**:
+  - Khi OTP sai: `{"statusCode": 400, "message": "Mã OTP không chính xác. Vui lòng kiểm tra lại"}`
+  - Khi OTP hết hạn: `{"statusCode": 400, "message": "Mã OTP đã hết hạn. Vui lòng gửi lại yêu cầu mới"}`
+
+---
+
+## 6. Tiêu Chuẩn Bảo Mật & Best Practices
+
+1. **Phòng chống dò quét tài khoản (Email Enumeration Prevention)**:
+   - Endpoint `POST /auth/forgot-password` luôn trả về cùng một thông điệp phản hồi `200 OK` dù email có tồn tại hay không, ngăn chặn kẻ tấn công lợi dụng endpoint để rà quét danh sách email người dùng trong hệ thống.
+2. **Bảo mật mã OTP một chiều (SHA-256 Hashing)**:
+   - Tuyệt đối không lưu trữ mã OTP dạng văn bản thuần trong CSDL. Mã OTP chỉ được băm `SHA-256` trước khi lưu vào `resetPasswordOtp`.
+3. **Mã OTP dùng một lần (Single-Use OTP) & Hạn dùng chặt chẽ**:
+   - Mã OTP tự động hết hiệu lực sau 10 phút.
+   - Ngay sau khi đổi mật khẩu thành công, mã lập tức bị vô hiệu hóa để ngăn chặn tấn công phát lại (Replay Attacks).
+4. **Giới hạn tần suất gửi mã (Rate Limiting & Cooldown)**:
+   - Áp dụng thời gian chờ (cooldown) bắt buộc 60 giây giữa các lần yêu cầu gửi OTP dựa trên trường `lastResetPasswordRequestedAt`, ngăn chặn hành vi spam email hoặc cạn kiệt hạn ngạch SMTP.
+5. **Đồng bộ chính sách mật khẩu (Password Policy)**:
+   - Cả hai luồng Đăng ký (`register`) và Đặt lại mật khẩu (`reset-password`) đều áp dụng chính sách mật khẩu tối thiểu 8 ký tự ở server (`@MinLength(8)`) và kiểm tra độ an toàn thời gian thực (`PasswordStrengthIndicator`) ở phía client.
