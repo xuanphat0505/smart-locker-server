@@ -12,7 +12,11 @@
 
 Hệ thống giao nhận hàng Smart Locker cung cấp nền tảng tự động hóa việc giao nhận bưu kiện tại các khu đô thị và chung cư:
 - **Shipper (Tài Xế Giao Hàng - Khách Vãng Lai / No Auth)**: Không cần tài khoản $\rightarrow$ Quét mã QR trạm tủ $\rightarrow$ Tra cứu cư dân theo SĐT $\rightarrow$ Chọn cỡ ngăn $\rightarrow$ Bỏ hàng và đóng cửa tủ $\rightarrow$ Hỗ trợ gửi liên tiếp nhiều đơn trong 1 phiên (Batch Drop-off).
-- **Resident (Cư Dân Nhận Hàng - JWT Auth)**: Nhận thông báo tức thì (Push Notification) $\rightarrow$ Xem mã OTP 6 số hoặc quét mã QR tại trạm tủ để nhận hàng 24/7.
+- **Resident (Cư Dân Nhận Hàng - JWT Auth)**: Nhận thông báo tức thì (Push Notification) $\rightarrow$ Hỗ trợ **4 phương thức nhận hàng linh hoạt 24/7**:
+  1. *Nhập mã OTP 6 số tại màn hình Kiosk của trạm tủ*.
+  2. *Quét mã QR Token động trước Camera của trạm tủ*.
+  3. *Bấm nút "Mở Tủ Từ Xa" trên ứng dụng di động React Native (Remote Proximity Unlock)*.
+  4. *Ủy quyền cho người thân/bạn bè nhận hộ qua mã OTP chia sẻ*.
 - **Building Admin & System Admin**: Giám sát tình trạng trạm tủ, tỷ lệ lấp đầy ngăn tủ, quản lý bưu kiện quá hạn lưu kho và hỗ trợ mở tủ khẩn cấp từ xa khi xảy ra sự cố.
 
 ```mermaid
@@ -34,13 +38,16 @@ graph TD
 
     subgraph "ỨNG DỤNG NGƯỜI DÙNG (CLIENT LAYER)"
         SP[Guest Shipper: Quét QR Tủ gửi hàng nhanh - Không cần Account]
-        RD[Mobile App Resident: Nhận mã OTP & Quét QR]
+        RD[Mobile App Resident: Nhận mã OTP, Quét QR, Mở từ xa]
         SCR[Màn hình cảm ứng tại Tủ: Nhập OTP mở cửa]
+        REL[Người thân nhận hộ: Nhập OTP được chia sẻ]
     end
 
     SP -->|POST /packages/drop-off (Public)| MP
     RD -->|GET /packages/my-packages (JWT)| MP
+    RD -->|POST /packages/:id/remote-unlock (JWT)| MP
     SCR -->|POST /packages/pickup/otp (Public)| MP
+    REL -->|POST /packages/pickup/otp (Public)| MP
     MP --> ML
     MP --> MN
     ML --> IOT
@@ -229,7 +236,20 @@ sequenceDiagram
 
 ---
 
-### 3.2. Quy Trình Cư Dân Nhận Hàng Bằng Mã OTP (Pick-up OTP Flow)
+### 3.2. Bảng Tổng Hợp 4 Phương Thức Nhận Hàng Của Cư Dân (Resident Retrieval Channels)
+
+Hệ thống cung cấp 4 phương thức nhận hàng linh hoạt để tối ưu trải nghiệm trong mọi hoàn cảnh thực tế:
+
+| Phương thức | Thiết bị tương tác | Cơ chế xác thực | Kịch bản sử dụng tối ưu | Ưu điểm nổi bật |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Nhập OTP tại Kiosk** | Màn hình cảm ứng / Phím số tại tủ | Mã OTP 6 chữ số ngẫu nhiên (`pinCode`) | Khi không mang điện thoại hoặc hết pin; có thể xem mã từ tin nhắn/email | Không phụ thuộc vào thiết bị di động tại thời điểm nhận |
+| **2. Quét QR tại tủ** | Camera Kiosk của trạm tủ + Mobile App | Token động 32 ký tự hex (`qrCodeToken`) | Nhận hàng nhanh 1 chạm khi đứng trước trạm tủ | Không chạm màn hình công cộng, chống nhìn lén mã PIN |
+| **3. Mở tủ từ xa trên App**| Ứng dụng di động React Native | JWT Token định danh Cư dân (`Bearer Token`) | Vừa bước ra khỏi thang máy sảnh chung cư, đứng gần trạm tủ | Tiện lợi tối đa, tự động mở sẵn ngăn tủ khi đến gần |
+| **4. Ủy quyền nhận hộ** | Tin nhắn SMS, Zalo, Messenger | Mã OTP 6 số được chia sẻ trực tiếp | Khi cư dân vắng nhà, đi công tác, nhờ người thân/hàng xóm lấy hộ | An toàn, mã tự hủy ngay sau khi ngăn tủ được mở |
+
+---
+
+### 3.3. Phương Thức 1: Nhận Hàng Bằng Mã OTP Tại Màn Hình Kiosk (Pick-up OTP Flow)
 
 ```mermaid
 sequenceDiagram
@@ -248,7 +268,7 @@ sequenceDiagram
         Backend->>DB: Giải phóng Box (status = AVAILABLE, currentPackageId = null)
         Backend->>DB: Ghi nhật ký LockerLog (action = PICKUP_OTP)
         Backend-->>LockerKiosk: 200 OK { boxNumber: 5, action: "OPEN_DOOR", message: "Mở ngăn số 5 thành công" }
-        Note over LockerKiosk: Bộ điều khiển bật mở chốt khóa ngăn số 5.<br/>Cư dân lấy hàng và đóng cửa tủ.
+        Note over LockerKiosk: Bộ điều khiển kích mở chốt khóa ngăn số 5.<br/>Cư dân lấy hàng và đóng cửa tủ.
     else Mã OTP sai hoặc đã hết hạn
         Backend-->>LockerKiosk: 400 Bad Request { message: "Mã OTP không chính xác hoặc đơn hàng đã được lấy" }
     end
@@ -256,7 +276,7 @@ sequenceDiagram
 
 ---
 
-### 3.3. Quy Trình Cư Dân Quét Mã QR Mở Tủ (Pick-up QR Flow)
+### 3.4. Phương Thức 2: Nhận Hàng Bằng Quét Mã QR Token Trước Đầu Đọc Tủ (Pick-up QR Flow)
 
 ```mermaid
 sequenceDiagram
@@ -271,7 +291,61 @@ sequenceDiagram
     LockerCamera->>Backend: 3. POST /packages/pickup/qr { qrCodeToken, lockerCode }
     Backend->>DB: Xác thực qrCodeToken & Package
     Backend->>DB: Cập nhật Package: PICKED_UP & Box: AVAILABLE
+    Backend->>DB: Ghi nhật ký LockerLog (action = PICKUP_QR)
     Backend-->>LockerCamera: 200 OK { boxNumber: 5, action: "OPEN_DOOR" }
+```
+
+---
+
+### 3.5. Phương Thức 3: Mở Tủ Từ Xa Trên Ứng Dụng Di Động (Remote Proximity Unlock Flow)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Resident as Cư Dân (Mobile App)
+    participant Backend as NestJS Server
+    participant DB as MongoDB
+    participant IOT as Bộ Điều Khiển Tủ (Kiosk/ESP32)
+
+    Resident->>Resident: 1. Đi đến sảnh trạm tủ & Mở chi tiết kiện hàng trên App
+    Resident->>Backend: 2. POST /packages/:id/remote-unlock (Header: Bearer Token)
+    Backend->>DB: Tìm Package theo :id & kiểm tra residentId === req.user.userId
+    
+    alt Không phải chủ nhân kiện hàng hoặc trạng thái không phải WAITING_FOR_PICKUP
+        Backend-->>Resident: 403 Forbidden / 400 Bad Request
+    else Xác thực thành công & Đơn hợp lệ
+        Backend->>DB: Cập nhật Package (status = PICKED_UP, pickedUpAt = now)
+        Backend->>DB: Giải phóng Box (status = AVAILABLE, currentPackageId = null)
+        Backend->>DB: Ghi nhật ký LockerLog (action = REMOTE_OPEN, performedBy = resident.phone)
+        Backend->>IOT: Kích hoạt lệnh mở chốt ngăn tủ tương ứng
+        Backend-->>Resident: 200 OK { boxNumber: 5, action: "OPEN_DOOR", message: "Mở ngăn số 5 thành công" }
+        Note over Resident, IOT: Cửa ngăn tủ tự động bật mở.<br/>Cư dân lấy hàng ra và đóng cửa ngăn tủ.
+    end
+```
+
+---
+
+### 3.6. Phương Thức 4: Ủy Quyền Cho Người Thân Nhận Hộ (Delegated Pick-up Flow)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Resident as Cư Dân (Chủ Kiện Hàng)
+    actor Relative as Người Thân / Hàng Xóm (Nhận Hộ)
+    participant LockerKiosk as Màn Hình Kiosk Tủ
+    participant Backend as NestJS Server
+    participant DB as MongoDB
+
+    Resident->>Resident: 1. Bấm nút "Chia sẻ mã nhận hàng" trên App
+    Resident->>Relative: 2. Gửi tin nhắn chứa thông tin: Trạm tủ, Số ngăn, Mã OTP 6 số (qua Zalo/SMS)
+    Relative->>LockerKiosk: 3. Đi xuống sảnh trạm tủ & Chọn "Nhận Hàng"
+    Relative->>LockerKiosk: 4. Nhập mã OTP 6 số được chia sẻ
+    LockerKiosk->>Backend: 5. POST /packages/pickup/otp { pinCode, lockerCode }
+    Backend->>DB: Xác thực mã OTP hợp lệ
+    Backend->>DB: Cập nhật Package: PICKED_UP & Box: AVAILABLE
+    Backend->>DB: Ghi nhật ký LockerLog (action = PICKUP_OTP)
+    Backend-->>LockerKiosk: 200 OK { boxNumber: 5, action: "OPEN_DOOR" }
+    Note over Relative, LockerKiosk: Cửa ngăn tủ mở ra, người thân lấy hàng thành công.<br/>Mã OTP tự động bị hủy (Single-use), không thể tái sử dụng.
 ```
 
 ---
@@ -289,6 +363,7 @@ sequenceDiagram
 | **Lấy QR Token nhận**| `GET /packages/:id/qr-token` | `RESIDENT` *(JWT)* | Lấy mã QR động dùng để quét trước camera tủ |
 | **Nhập OTP mở tủ** | `POST /packages/pickup/otp` | **Public / Kiosk Tủ**| Nhập OTP 6 số tại màn hình tủ để mở khóa lấy đồ |
 | **Quét QR mở tủ** | `POST /packages/pickup/qr` | **Public / Kiosk Tủ**| Quét QR Token trước camera tủ để mở khóa lấy đồ |
+| **Mở tủ từ xa qua App** | `POST /packages/:id/remote-unlock`| `RESIDENT` *(JWT)* | Cư dân bấm mở khóa tủ từ xa khi đứng cạnh trạm tủ |
 | **Danh sách trạm tủ** | `GET /lockers` | `SYSTEM_ADMIN`, `BUILDING_ADMIN` | Quản trị viên xem mạng lưới trạm tủ toàn hệ thống |
 | **Tạo trạm tủ mới** | `POST /lockers` | `SYSTEM_ADMIN` | Thêm trạm tủ mới (auto sinh các ngăn tủ con) |
 | **Mở tủ khẩn cấp từ xa**| `POST /lockers/:id/remote-open`| `BUILDING_ADMIN` | BQL mở khẩn cấp khi kẹt cửa hoặc xử lý sự cố |
@@ -430,6 +505,110 @@ sequenceDiagram
 
 ---
 
+### 5.6. `POST /packages/:id/remote-unlock` (Cư Dân Mở Tủ Từ Xa Qua Ứng Dụng Di Động)
+- **Quyền truy cập**: `RESIDENT` *(JWT)*
+- **Header**: `Authorization: Bearer <RESIDENT_TOKEN>`
+- **Params**: `id` - Mã ObjectId của bưu kiện cần mở tủ nhận hàng
+- **Request Body** *(Tùy chọn phục vụ kiểm tra cự ly an toàn Proximity)*:
+```json
+{
+  "currentLocation": {
+    "latitude": 10.7769,
+    "longitude": 106.7009
+  }
+}
+```
+- **Hành vi xử lý**:
+  1. Trích xuất `req.user.userId` từ JWT Token xác thực.
+  2. Tìm bưu kiện theo `id` và đối soát quyền sở hữu: Bắt buộc `package.residentId.toString() === req.user.userId` (Chặn `403 Forbidden` nếu cố ý mở đơn của người khác).
+  3. Kiểm tra trạng thái bưu kiện: Bắt buộc đang ở trạng thái `WAITING_FOR_PICKUP`.
+  4. Cập nhật bưu kiện: `status = PICKED_UP`, `pickedUpAt = now`.
+  5. Cập nhật ngăn tủ: `box.status = AVAILABLE`, `box.currentPackageId = undefined`, `box.doorStatus = OPEN`.
+  6. Ghi nhật ký: `LockerLog` với `action = REMOTE_OPEN`, `performedBy = resident.phone`.
+  7. Trả về phản hồi kèm lệnh `action: "OPEN_DOOR"` kích hoạt rơ-le mở chốt điện từ của ngăn tủ tương ứng.
+- **Response Thành Công (200 OK)**:
+```json
+{
+  "message": "Xác thực thành công. Cửa ngăn tủ số 4 đã mở!",
+  "package": {
+    "_id": "6b1234567890abcdef123456",
+    "trackingNumber": "SPX839201948",
+    "status": "PICKED_UP",
+    "pickedUpAt": "2026-09-08T15:00:00.000Z"
+  },
+  "boxNumber": 4,
+  "action": "OPEN_DOOR"
+}
+```
+- **Response Lỗi Quyền Hạn (403 Forbidden)**:
+```json
+{
+  "statusCode": 403,
+  "message": "Bạn không có quyền mở bưu kiện của người khác"
+}
+```
+
+---
+
+### 5.7. `POST /packages/pickup/qr` (Quét QR Token Trước Camera Tủ Để Nhận Hàng)
+- **Quyền truy cập**: Public / Camera Kiosk Tủ
+- **Request Body**:
+```json
+{
+  "lockerCode": "LK-S101-01",
+  "qrCodeToken": "a3f8902b1c4e5d67890123456789abcdef"
+}
+```
+- **Hành vi xử lý**:
+  1. Tìm bưu kiện theo `qrCodeToken` và `status = WAITING_FOR_PICKUP`.
+  2. Xác minh bưu kiện có đúng đang nằm tại trạm tủ `lockerCode` tương ứng hay không.
+  3. Đổi trạng thái bưu kiện: `status = PICKED_UP`, `pickedUpAt = now`.
+  4. Giải phóng ngăn tủ: `box.status = AVAILABLE`, `box.currentPackageId = undefined`, `box.doorStatus = OPEN`.
+  5. Ghi nhật ký: `LockerLog` với `action = PICKUP_QR`, `performedBy = package.receiverPhone`.
+  6. Trả về thông tin ngăn tủ và lệnh kích hoạt mở chốt khóa `OPEN_DOOR`.
+- **Response (200 OK)**:
+```json
+{
+  "message": "Xác thực mã QR thành công. Cửa ngăn tủ số 4 đã mở!",
+  "package": {
+    "_id": "6b1234567890abcdef123456",
+    "trackingNumber": "SPX839201948",
+    "status": "PICKED_UP",
+    "pickedUpAt": "2026-09-08T15:00:00.000Z"
+  },
+  "boxNumber": 4,
+  "action": "OPEN_DOOR"
+}
+```
+- **Response Lỗi (400 Bad Request)**:
+```json
+{
+  "statusCode": 400,
+  "message": "Mã QR không hợp lệ, sai trạm tủ hoặc kiện hàng đã được nhận"
+}
+```
+
+---
+
+### 5.8. `GET /packages/:id/qr-token` (Cư Dân Lấy QR Token Động Trên Mobile App)
+- **Quyền truy cập**: `RESIDENT` *(JWT)*
+- **Header**: `Authorization: Bearer <RESIDENT_TOKEN>`
+- **Params**: `id` - Mã ObjectId của bưu kiện
+- **Hành vi xử lý**:
+  1. Đối soát quyền sở hữu: `package.residentId.toString() === req.user.userId`.
+  2. Kiểm tra trạng thái đơn: Bắt buộc `WAITING_FOR_PICKUP`.
+  3. Trả về `qrCodeToken` (chuỗi 32 hex) để thư viện React Native render mã QR trên màn hình điện thoại.
+- **Response (200 OK)**:
+```json
+{
+  "packageId": "6b1234567890abcdef123456",
+  "qrCodeToken": "a3f8902b1c4e5d67890123456789abcdef",
+  "expiresIn": "Còn hiệu lực cho đến khi bưu kiện được nhận hoặc quá hạn lưu kho"
+}
+```
+
+---
+
 ## 6. Lộ Trình Triển Khai Backend (NestJS Roadmap)
 
 ```text
@@ -448,16 +627,23 @@ GIAI ĐOẠN 2: MODULE PACKAGES & GIAO NHẬN (CORE BUSINESS LOGIC)
 ├── 2.1 Khởi tạo Enums: PackageStatus, LockerAction
 ├── 2.2 Khởi tạo Schemas Mongoose: PackageSchema (hỗ trợ shipperPhone/carrierName), LockerLogSchema
 ├── 2.3 Xây dựng PackagesService:
-│   ├── POST /packages/drop-off (No-Auth Guest Shipper gửi hàng, khóa Box, sinh OTP 6 số)
-│   ├── GET /packages/my-packages (Cư Dân xem danh sách đơn đang chờ)
+│   ├── POST /packages/drop-off (No-Auth Guest Shipper gửi hàng, khóa Box, sinh OTP 6 số & QR Token)
+│   ├── GET /packages/my-packages (Cư Dân xem danh sách đơn đang chờ nhận)
 │   ├── GET /packages/:id (Chi tiết kiện hàng)
-│   ├── POST /packages/pickup/otp (Nhập OTP mở tủ, đổi Box thành AVAILABLE)
-│   └── POST /packages/pickup/qr (Quét QR mở tủ)
+│   ├── GET /packages/:id/qr-token (Lấy QR Token động phục vụ render QR nhận hàng)
+│   ├── POST /packages/pickup/otp (Phương thức 1 & 4: Nhập OTP mở tủ trực tiếp/nhận hộ)
+│   ├── POST /packages/pickup/qr (Phương thức 2: Quét mã QR trước camera tủ Kiosk)
+│   └── POST /packages/:id/remote-unlock (Phương thức 3: Cư dân bấm mở tủ từ xa qua App)
 ├── 2.4 Xây dựng module Notifications (Tích hợp Expo Push Service gửi thông báo tới app Cư Dân)
 └── 2.5 Cronjob tự động chuyển trạng thái đơn hàng quá hạn (OVERDUE sau 48h)
 
 GIAI ĐOẠN 3: TÍCH HỢP TOÀN DIỆN MOBILE APP & KIOSK
 ├── 3.1 Nối API Mobile Shipper: drop-off/scan -> locker/select -> locker/interaction -> drop-off/summary
-├── 3.2 Nối API Mobile Resident: Trang chủ (readyShipment) -> Bưu phẩm -> Mở tủ OTP
-└── 3.3 Kiểm thử E2E trọn vẹn luồng từ khi Shipper bỏ đồ đến khi Cư Dân nhận hàng
+├── 3.2 Nối API Mobile Resident (Hỗ trợ trọn vẹn 4 phương thức):
+│   ├── Trang chủ (readyShipment) -> Bưu phẩm chi tiết
+│   ├── Modal hiển thị mã OTP & Nút chia sẻ nhận hộ (Phương thức 1 & 4)
+│   ├── Modal hiển thị mã QR động để quét trước camera tủ (Phương thức 2)
+│   └── Nút "Mở Tủ Từ Xa" (Remote Unlock) kích hoạt Solenoid khi đứng gần tủ (Phương thức 3)
+└── 3.3 Kiểm thử E2E trọn vẹn luồng từ khi Shipper bỏ đồ đến khi Cư Dân nhận hàng qua cả 4 kênh
 ```
+

@@ -47,32 +47,34 @@ Bảng dữ liệu `packages` trong MongoDB:
 ### Chỉ Mục Cơ Sở Dữ Liệu Tối Ưu (Indexes):
 - `{ lockerId: 1, pinCode: 1, status: 1 }`: **Compound Index** (Cư dân bấm OTP tại Kiosk $\rightarrow$ Tìm kiếm bản ghi trong < 2ms).
 - `{ residentId: 1, status: 1 }`: **Compound Index** (Tối ưu truy vấn danh sách kiện hàng đang chờ của cư dân trên Mobile App).
-- `{ status: 1, expiredAt: 1 }`: **Compound Index** (Tối ưu tác vụ Cronjob rà soát các đơn hàng hết hạn sau 48h).
+- `{ qrCodeToken: 1 }`: **Unique Index** (Quét mã QR token mở tủ tức thì).
+- `{ status: 1, expiredAt: 1 }`: **Index** (Cronjob rà soát đơn hàng quá hạn 48 giờ).
 
 ---
 
-## 3. Các Trạng Thái Vòng Đời Bưu Kiện (`PackageStatus`)
+## 3. Vòng Đời Bưu Kiện (Package Lifecycle State Machine)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> WAITING_FOR_PICKUP: Shipper gửi hàng vào ngăn tủ (drop-off)
-    WAITING_FOR_PICKUP --> PICKED_UP: Cư dân nhập đúng OTP hoặc quét QR
-    WAITING_FOR_PICKUP --> OVERDUE: Quá hạn 48 giờ chưa lấy (Cronjob)
-    OVERDUE --> PICKED_UP: Cư dân vẫn có thể lấy nếu BQL chưa thu hồi
-    OVERDUE --> RETURNED: Ban Quản Lý thu hồi về kho hoặc hoàn trả đơn vị vận chuyển
+    [*] --> WAITING_FOR_PICKUP: Shipper bỏ hàng & đóng tủ
+    WAITING_FOR_PICKUP --> PICKED_UP: Cư dân nhận hàng (OTP / QR / Remote)
+    WAITING_FOR_PICKUP --> OVERDUE: Quá hạn 48 giờ chưa nhận (Cronjob)
+    OVERDUE --> PICKED_UP: Cư dân liên hệ BQL nộp phạt & nhận hàng
+    OVERDUE --> RETURNED: Shipper/BQL thu hồi trả lại nhà bán
     PICKED_UP --> [*]
     RETURNED --> [*]
 ```
 
 ---
 
-## 4. Danh Sách API & Ma Trận Phân Quyền (RBAC Matrix)
+## 4. Danh Sách API Endpoints (RBAC)
 
-| Endpoint | Method | Quyền Hạn | Chức Năng Nghiệp Vụ |
+| Endpoint | Method | Phân Quyền (RBAC) | Mô Tả Nghiệp Vụ |
 | :--- | :---: | :---: | :--- |
 | `/packages/drop-off` | `POST` | **Public (Guest)** | Tài xế gửi hàng vào ngăn tủ, khóa Box, sinh OTP 6 số |
 | `/packages/pickup/otp` | `POST` | **Public / Kiosk** | Cư dân nhập OTP 6 số tại màn hình trạm tủ để mở chốt |
 | `/packages/pickup/qr` | `POST` | **Public / Kiosk** | Quét mã QR token trước camera trạm tủ để mở chốt |
+| `/packages/:id/remote-unlock` | `POST` | `RESIDENT` *(JWT)* | Cư dân nhấn nút mở ngăn tủ từ xa trên Mobile App |
 | `/packages/my-packages`| `GET` | `RESIDENT` *(JWT)* | Cư dân xem danh sách các kiện hàng của chính mình |
 | `/packages/:id` | `GET` | `RESIDENT` *(JWT)* | Xem chi tiết bưu kiện, ngăn chứa, hạn lấy |
 | `/packages/:id/qr-token`| `GET`| `RESIDENT` *(JWT)* | Lấy mã QR Token động hiển thị trên ứng dụng di động |
@@ -117,10 +119,30 @@ sequenceDiagram
     alt Đúng mã OTP và không bị tạm khóa
         API->>DB: Đổi Package sang PICKED_UP, pickedUpAt = now
         API->>DB: Giải phóng Box sang AVAILABLE, doorStatus = OPEN, hasItem = false
-        API->>DB: Ghi nhật ký LockerLog (action: PICKUP_OTP, status: SUCCESS)
+        API->>DB: Ghi nhật ký LockerLog (action = PICKUP_OTP, status: SUCCESS)
         API-->>Kiosk: 200 OK -> Mở chốt Solenoid ngăn tủ cho cư dân lấy đồ
     else Sai mã OTP
         API-->>Kiosk: 400 BadRequestException (Thông báo mã OTP không hợp lệ)
+    end
+```
+
+### 5.3. Luồng Cư Dân Mở Tủ Từ Xa Trên Ứng Dụng Di Động (`POST /packages/:id/remote-unlock`)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Resident as Cư Dân (Mobile App)
+    participant API as Packages API
+    participant DB as MongoDB
+
+    Resident->>API: POST /packages/:id/remote-unlock (Bearer Token)
+    API->>DB: Kiểm tra quyền sở hữu kiện hàng (residentId === req.user.userId)
+    alt Không khớp hoặc đơn đã nhận
+        API-->>Resident: 403 Forbidden / 400 BadRequest
+    else Xác thực hợp lệ
+        API->>DB: Đổi Package sang PICKED_UP, pickedUpAt = now
+        API->>DB: Giải phóng Box sang AVAILABLE, doorStatus = OPEN, hasItem = false
+        API->>DB: Ghi nhật ký LockerLog (action: REMOTE_OPEN, status: SUCCESS)
+        API-->>Resident: 200 OK -> Mở chốt Solenoid ngăn tủ cho cư dân lấy đồ
     end
 ```
 
@@ -134,3 +156,5 @@ sequenceDiagram
    - Mỗi bưu kiện ghi nhận số lần nhập sai liên tiếp (`failedAttempts`). Nếu nhập sai quá 5 lần, ngăn tủ sẽ tự động kích hoạt thời gian khóa tạm thời (`lockedUntil: +15 phút`) để ngăn chặn việc dò mã tại bàn phím Kiosk.
 3. **Mã QR Động 32 Ký Tự Hex**:
    - Thay vì dùng ID đơn hàng cố định dễ bị đoán, mã QR Token được mã hóa từ nguồn ngẫu nhiên `crypto.randomBytes(16).toString('hex')`, chỉ có giá trị khi đơn hàng đang ở trạng thái `WAITING_FOR_PICKUP`.
+4. **Xác thực Chủ Sở Hữu Khi Mở Từ Xa (Ownership Verification)**:
+   - Endpoint mở tủ từ xa bắt buộc chứng thực qua Access Token JWT, đối soát chặt chẽ `package.residentId === req.user.userId`, ngăn chặn tuyệt đối việc cư dân mở trộm ngăn tủ của căn hộ khác.

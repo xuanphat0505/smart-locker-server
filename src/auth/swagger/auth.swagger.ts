@@ -10,6 +10,9 @@ import {
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  TwoFactorTurnOnDto,
+  TwoFactorTurnOffDto,
+  TwoFactorAuthenticateDto,
 } from '../dto';
 
 // Tài liệu Swagger cho endpoint đăng ký Cư Dân
@@ -149,7 +152,108 @@ export function ApiResetPasswordDoc() {
     }),
     ApiResponse({
       status: 400,
-      description: 'Mã OTP không hợp lệ, đã hết hạn hoặc mật khẩu không đạt yêu cầu bảo mật',
+      description:
+        'Mã OTP không hợp lệ, đã hết hạn hoặc mật khẩu không đạt yêu cầu bảo mật',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint khởi tạo khóa bí mật 2FA TOTP và mã QR
+export function Api2faGenerateDoc() {
+  return applyDecorators(
+    ApiBearerAuth('JWT-auth'),
+    ApiOperation({
+      summary: 'Khởi tạo khóa bí mật 2FA TOTP và mã QR',
+      description:
+        'Sinh chuỗi Base32 secret và mã QR Data URL để người dùng quét vào Google Authenticator hoặc ứng dụng TOTP tương thích',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Khởi tạo khóa bí mật và mã QR thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Tài khoản đã kích hoạt 2FA trước đó',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa xác thực hoặc token không hợp lệ',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint kích hoạt xác thực hai bước TOTP
+export function Api2faTurnOnDoc() {
+  return applyDecorators(
+    ApiBearerAuth('JWT-auth'),
+    ApiOperation({
+      summary: 'Kích hoạt xác thực hai bước 2FA TOTP',
+      description:
+        'Xác minh mã 6 chữ số từ ứng dụng Authenticator, kích hoạt 2FA và trả về danh sách 8 mã khôi phục dự phòng',
+    }),
+    ApiBody({ type: TwoFactorTurnOnDto }),
+    ApiResponse({
+      status: 200,
+      description: 'Kích hoạt xác thực hai bước thành công kèm 8 mã khôi phục',
+    }),
+    ApiResponse({
+      status: 400,
+      description:
+        'Mã xác thực không hợp lệ, hết hạn hoặc chưa khởi tạo mã bí mật',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa xác thực hoặc token không hợp lệ',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint vô hiệu hóa xác thực hai bước TOTP
+export function Api2faTurnOffDoc() {
+  return applyDecorators(
+    ApiBearerAuth('JWT-auth'),
+    ApiOperation({
+      summary: 'Vô hiệu hóa xác thực hai bước 2FA TOTP',
+      description:
+        'Yêu cầu nhập mật khẩu tài khoản và mã OTP hiện tại để xác minh danh tính trước khi tắt 2FA',
+    }),
+    ApiBody({ type: TwoFactorTurnOffDto }),
+    ApiResponse({
+      status: 200,
+      description: 'Vô hiệu hóa xác thực hai bước thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Mật khẩu hoặc mã xác thực không chính xác',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa xác thực hoặc token không hợp lệ',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint xác thực bước thứ hai khi đăng nhập
+export function Api2faAuthenticateDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Xác thực bước 2 bằng mã TOTP hoặc mã khôi phục khi đăng nhập',
+      description:
+        'Gửi mã tempToken nhận được sau bước nhập email/password cùng mã 6 số TOTP hoặc mã recovery code để hoàn tất đăng nhập',
+    }),
+    ApiBody({ type: TwoFactorAuthenticateDto }),
+    ApiResponse({
+      status: 200,
+      description:
+        'Xác thực hai bước thành công, phát hành Access Token và Refresh Token',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Mã xác thực hoặc mã khôi phục không chính xác',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Phiên đăng nhập tạm thời hết hạn hoặc không hợp lệ',
     }),
   );
 }
