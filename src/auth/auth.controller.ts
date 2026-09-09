@@ -1,10 +1,4 @@
-import {
-  Controller,
-  Request,
-  Post,
-  UseGuards,
-  Body,
-} from '@nestjs/common';
+import { Controller, Request, Post, UseGuards, Body } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -15,6 +9,9 @@ import {
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  TwoFactorTurnOnDto,
+  TwoFactorTurnOffDto,
+  TwoFactorAuthenticateDto,
 } from './dto';
 import type {
   LoginResponse,
@@ -22,6 +19,8 @@ import type {
   TokensResponse,
   SanitizedUser,
   AuthenticatedUser,
+  TwoFactorGenerateResponse,
+  TwoFactorTurnOnResponse,
 } from './interfaces/auth.interface';
 import {
   ApiRegisterResidentDoc,
@@ -31,6 +30,10 @@ import {
   ApiLogoutDoc,
   ApiForgotPasswordDoc,
   ApiResetPasswordDoc,
+  Api2faGenerateDoc,
+  Api2faTurnOnDoc,
+  Api2faTurnOffDoc,
+  Api2faAuthenticateDoc,
 } from './swagger/auth.swagger';
 
 @ApiTags('Auth')
@@ -97,5 +100,46 @@ export class AuthController {
     @Body() dto: ResetPasswordDto,
   ): Promise<{ statusCode: number; message: string }> {
     return this.authService.resetPassword(dto);
+  }
+
+  // Khởi tạo khóa bí mật 2FA và sinh mã QR cài đặt Authenticator
+  @UseGuards(JwtAuthGuard)
+  @Post('2fa/generate')
+  @Api2faGenerateDoc()
+  async generate2faSecret(
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<TwoFactorGenerateResponse> {
+    return this.authService.generate2faSecret(req.user.userId);
+  }
+
+  // Kích hoạt xác thực hai bước TOTP sau khi xác minh mã OTP ban đầu
+  @UseGuards(JwtAuthGuard)
+  @Post('2fa/turn-on')
+  @Api2faTurnOnDoc()
+  async turnOn2fa(
+    @Request() req: { user: AuthenticatedUser },
+    @Body() dto: TwoFactorTurnOnDto,
+  ): Promise<TwoFactorTurnOnResponse> {
+    return this.authService.turnOn2fa(req.user.userId, dto);
+  }
+
+  // Hủy kích hoạt xác thực hai bước TOTP kèm mật khẩu và mã OTP xác nhận
+  @UseGuards(JwtAuthGuard)
+  @Post('2fa/turn-off')
+  @Api2faTurnOffDoc()
+  async turnOff2fa(
+    @Request() req: { user: AuthenticatedUser },
+    @Body() dto: TwoFactorTurnOffDto,
+  ): Promise<{ message: string }> {
+    return this.authService.turnOff2fa(req.user.userId, dto);
+  }
+
+  // Xác thực bước thứ hai khi đăng nhập bằng mã TOTP hoặc mã khôi phục
+  @Post('2fa/authenticate')
+  @Api2faAuthenticateDoc()
+  async authenticate2fa(
+    @Body() dto: TwoFactorAuthenticateDto,
+  ): Promise<LoginResponse> {
+    return this.authService.authenticate2fa(dto);
   }
 }

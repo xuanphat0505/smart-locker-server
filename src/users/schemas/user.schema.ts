@@ -18,7 +18,7 @@ export class User extends Document {
   @Prop({ required: true, unique: true, index: true, trim: true })
   phone: string;
 
-  @Prop({ required: true })
+  @Prop({ required: true, select: false })
   password: string;
 
   // Ảnh đại diện cá nhân của người dùng
@@ -70,11 +70,11 @@ export class User extends Document {
   devicePushToken?: string;
 
   // Mã băm của Refresh Token
-  @Prop({ required: false })
+  @Prop({ required: false, select: false })
   refreshTokenHash?: string;
 
   // Mã băm SHA-256 của mã OTP đặt lại mật khẩu
-  @Prop({ required: false })
+  @Prop({ required: false, select: false })
   resetPasswordOtp?: string;
 
   // Thời điểm hết hạn của mã OTP đặt lại mật khẩu
@@ -84,6 +84,24 @@ export class User extends Document {
   // Thời điểm gửi yêu cầu đặt lại mật khẩu gần nhất để limit tần suất gửi
   @Prop({ required: false })
   lastResetPasswordRequestedAt?: Date;
+
+  // Quản lý trạng thái và dữ liệu bảo mật xác thực hai bước TOTP
+  @Prop({
+    type: {
+      enabled: { type: Boolean, default: false },
+      secret: { type: String, select: false },
+      tempSecret: { type: String, select: false },
+      recoveryCodes: { type: [String], select: false, default: [] },
+    },
+    _id: false,
+    default: () => ({ enabled: false, recoveryCodes: [] }),
+  })
+  twoFactorAuth: {
+    enabled: boolean;
+    secret?: string;
+    tempSecret?: string;
+    recoveryCodes: string[];
+  };
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
@@ -91,5 +109,5 @@ export const UserSchema = SchemaFactory.createForClass(User);
 // Chỉ mục kết hợp tối ưu hóa truy vấn lọc cư dân chờ duyệt theo tòa nhà
 UserSchema.index({ buildingId: 1, role: 1, approvalStatus: 1 });
 
-// Chỉ mục kết hợp tìm nhanh các tài khoản Ban Quản Lý của tòa nhà
-UserSchema.index({ buildingId: 1, role: 1 });
+// Chỉ mục tìm kiếm nhanh tài khoản đang bật 2FA
+UserSchema.index({ 'twoFactorAuth.enabled': 1 }, { sparse: true });

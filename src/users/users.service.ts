@@ -10,6 +10,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { User, DEFAULT_AVATAR_URL } from './schemas/user.schema';
+import { Locker } from '../lockers/schemas/locker.schema';
 import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import {
@@ -30,6 +31,7 @@ export class UsersService {
 
   constructor(
     @InjectModel(User.name) private userModel: Model<User>,
+    @InjectModel(Locker.name) private lockerModel: Model<Locker>,
     private buildingsService: BuildingsService,
     private mailService: MailService,
     private notificationsService: NotificationsService,
@@ -115,9 +117,19 @@ export class UsersService {
     return sanitized as User;
   }
 
-  // Tìm kiếm người dùng theo địa chỉ email duy nhất
-  async findByEmail(email: string): Promise<User | null> {
-    return this.userModel.findOne({ email: email.toLowerCase().trim() }).exec();
+  // Tìm kiếm người dùng theo địa chỉ email kèm các trường bảo mật tùy chọn
+  async findByEmail(
+    email: string,
+    options?: { includePassword?: boolean; includeResetOtp?: boolean },
+  ): Promise<User | null> {
+    const query = this.userModel.findOne({ email: email.toLowerCase().trim() });
+    if (options?.includePassword) {
+      query.select('+password');
+    }
+    if (options?.includeResetOtp) {
+      query.select('+resetPasswordOtp');
+    }
+    return query.exec();
   }
 
   // Tìm kiếm người dùng theo số điện thoại duy nhất
@@ -130,14 +142,21 @@ export class UsersService {
     return this.userModel.findById(id).select('-password').exec();
   }
 
-  // Lấy thông tin hồ sơ tài khoản cá nhân kèm chi tiết tên tòa nhà
+  // Lấy thông tin hồ sơ tài khoản cá nhân kèm chi tiết tên tòa nhà, trạm tủ và hotline liên hệ
   async getProfile(userId: string): Promise<UserProfileResponseDto> {
     const user = await this.userModel
       .findById(userId)
       .select('-password -refreshTokenHash')
       .populate<{
-        buildingId?: { _id: Types.ObjectId; name: string };
-      }>('buildingId', 'name code address')
+        buildingId?: {
+          _id: Types.ObjectId;
+          name: string;
+          code: string;
+          address: string;
+          hotline?: string;
+          managementEmail?: string;
+        };
+      }>('buildingId', 'name code address hotline managementEmail')
       .lean()
       .exec();
 
@@ -146,8 +165,32 @@ export class UsersService {
     }
 
     const populatedBuilding = user.buildingId as
-      | { _id?: Types.ObjectId; name?: string }
+      | {
+          _id?: Types.ObjectId;
+          name?: string;
+          hotline?: string;
+          managementEmail?: string;
+        }
       | undefined;
+
+    let assignedLocker: UserProfileResponseDto['assignedLocker'];
+    if (populatedBuilding?._id) {
+      const locker = await this.lockerModel
+        .findOne({ buildingId: populatedBuilding._id })
+        .lean()
+        .exec();
+
+      if (locker) {
+        assignedLocker = {
+          id: locker._id.toString(),
+          name: locker.name,
+          code: locker.code,
+          status: locker.status,
+          locationDescription: locker.locationDescription,
+          totalBoxes: locker.totalBoxes,
+        };
+      }
+    }
 
     return {
       id: user._id.toString(),
@@ -162,6 +205,10 @@ export class UsersService {
       apartment: user.apartment,
       approvalStatus: user.approvalStatus,
       avatar: user.avatar,
+      assignedLocker,
+      buildingHotline: populatedBuilding?.hotline,
+      buildingEmail: populatedBuilding?.managementEmail,
+      twoFactorEnabled: user.twoFactorAuth?.enabled ?? false,
     };
   }
 
@@ -354,7 +401,10 @@ export class UsersService {
 
   // Thực hiện đổi mật khẩu cá nhân cho người dùng đang đăng nhập và hủy các phiên refresh token cũ
   async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
-    const user = await this.userModel.findById(userId).exec();
+    const user = await this.userModel
+      .findById(userId)
+      .select('+password')
+      .exec();
     if (!user) {
       throw new NotFoundException('Không tìm thấy tài khoản người dùng');
     }
@@ -389,7 +439,10 @@ export class UsersService {
 
   // Tìm kiếm thông tin người dùng bao gồm cả mã băm Refresh Token để xác thực
   async findByIdWithRefreshToken(id: string): Promise<User | null> {
-    return this.userModel.findById(id).select('-password').exec();
+    return this.userModel
+      .findById(id)
+      .select('+refreshTokenHash -password')
+      .exec();
   }
 
   // Cập nhật ảnh đại diện người dùng lên máy chủ lưu trữ và dọn dẹp ảnh cũ
@@ -462,6 +515,86 @@ export class UsersService {
           resetPasswordOtp: 1,
           resetPasswordOtpExpires: 1,
         },
+      })
+      .exec();
+  }
+
+  // Lưu khóa bí mật 2FA tạm thời đã mã hóa vào cơ sở dữ liệu khi bắt đầu tạo mới
+  async saveTempTwoFactorSecret(
+    userId: string,
+    encryptedTempSecret: string,
+  ): Promise<void> {
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        'twoFactorAuth.tempSecret': encryptedTempSecret,
+      })
+      .exec();
+  }
+
+  // Kích hoạt xác thực hai bước và lưu khóa bí mật chính thức cùng mã khôi phục đã băm
+  async enableTwoFactor(
+    userId: string,
+    encryptedSecret: string,
+    hashedRecoveryCodes: string[],
+  ): Promise<void> {
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        'twoFactorAuth.enabled': true,
+        'twoFactorAuth.secret': encryptedSecret,
+        'twoFactorAuth.recoveryCodes': hashedRecoveryCodes,
+        $unset: { 'twoFactorAuth.tempSecret': 1 },
+      })
+      .exec();
+  }
+
+  // Vô hiệu hóa xác thực hai bước và xóa bỏ toàn bộ khóa bí mật cùng mã khôi phục
+  async disableTwoFactor(userId: string): Promise<void> {
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        'twoFactorAuth.enabled': false,
+        'twoFactorAuth.recoveryCodes': [],
+        $unset: {
+          'twoFactorAuth.secret': 1,
+          'twoFactorAuth.tempSecret': 1,
+        },
+      })
+      .exec();
+  }
+
+  // Tìm kiếm thông tin người dùng phục vụ quy trình xác thực hai bước TOTP
+  async findUserFor2FA(
+    userId: string,
+    options?: {
+      includeTempSecret?: boolean;
+      includeSecret?: boolean;
+      includeRecoveryCodes?: boolean;
+      includePassword?: boolean;
+    },
+  ): Promise<User | null> {
+    const query = this.userModel.findById(userId);
+    if (options?.includeTempSecret) {
+      query.select('+twoFactorAuth.tempSecret');
+    }
+    if (options?.includeSecret) {
+      query.select('+twoFactorAuth.secret');
+    }
+    if (options?.includeRecoveryCodes) {
+      query.select('+twoFactorAuth.recoveryCodes');
+    }
+    if (options?.includePassword) {
+      query.select('+password');
+    }
+    return query.exec();
+  }
+
+  // Cập nhật danh sách mã khôi phục sau khi người dùng đã tiêu thụ một mã khôi phục
+  async consumeRecoveryCode(
+    userId: string,
+    remainingRecoveryCodes: string[],
+  ): Promise<void> {
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        'twoFactorAuth.recoveryCodes': remainingRecoveryCodes,
       })
       .exec();
   }

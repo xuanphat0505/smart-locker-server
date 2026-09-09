@@ -21,7 +21,7 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 | `name` | `String` | `required: true, trim: true` | Họ và tên hiển thị của người dùng |
 | `email` | `String` | `required: true, unique: true, lowercase: true` | Địa chỉ email đăng nhập duy nhất trong hệ thống |
 | `phone` | `String` | `required: true, unique: true, index: true` | Số điện thoại liên hệ duy nhất (định dạng Việt Nam) |
-| `password` | `String` | `required: true` | Mật khẩu đã được mã hóa một chiều bằng `bcrypt` (10 rounds) |
+| `password` | `String` | `required: true, select: false` | Mật khẩu đã băm `bcrypt` (10 rounds), ẩn khỏi truy vấn mặc định |
 | `role` | `String (Enum)` | `enum: Role, default: Role.RESIDENT` | Phân quyền: `SYSTEM_ADMIN`, `BUILDING_ADMIN`, `RESIDENT`, `SHIPPER` |
 | `buildingId` | `Types.ObjectId` | `ref: 'Building', required: false, index: true` | Liên kết đến Tòa nhà cư dân sinh sống hoặc BQL quản lý |
 | `apartment` | `String` | `required: false, trim: true` | Số căn hộ của cư dân (ví dụ: `A1204`, `15B`) |
@@ -31,10 +31,15 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 | `approvedAt` | `Date` | `required: false` | Thời điểm Ban Quản Lý phê duyệt hồ sơ |
 | `approvedBy` | `Types.ObjectId` | `ref: 'User', required: false` | Mã định danh của Quản trị viên đã thực hiện phê duyệt |
 | `devicePushToken` | `String` | `required: false, trim: true` | Push token từ thiết bị di động (Expo Push Token) để nhận thông báo |
-| `refreshTokenHash` | `String` | `required: false` | Mã băm của Refresh Token phục vụ xác thực an toàn |
-| `resetPasswordOtp` | `String` | `required: false` | Mã băm SHA-256 của mã OTP 6 số phục vụ đặt lại mật khẩu |
+| `refreshTokenHash` | `String` | `required: false, select: false` | Mã băm của Refresh Token, ẩn khỏi truy vấn mặc định |
+| `resetPasswordOtp` | `String` | `required: false, select: false` | Mã băm SHA-256 của mã OTP 6 số, ẩn khỏi truy vấn mặc định |
 | `resetPasswordOtpExpires` | `Date` | `required: false` | Thời điểm hết hạn của mã OTP đặt lại mật khẩu (hiệu lực 10 phút) |
 | `lastResetPasswordRequestedAt` | `Date` | `required: false` | Thời điểm yêu cầu gửi mã OTP gần nhất (áp dụng rate-limit 60 giây) |
+| `twoFactorAuth` | `Sub-Document` | `_id: false, default: () => ({ enabled: false })` | Quản lý trạng thái và dữ liệu bảo mật xác thực hai bước TOTP |
+| `twoFactorAuth.enabled` | `Boolean` | `default: false, index: sparse` | Trạng thái kích hoạt xác thực hai bước của tài khoản |
+| `twoFactorAuth.secret` | `String` | `required: false, select: false` | Khóa bí mật TOTP đã mã hóa đối xứng AES-256-GCM |
+| `twoFactorAuth.tempSecret` | `String` | `required: false, select: false` | Khóa bí mật tạm thời trong quá trình người dùng quét mã thiết lập |
+| `twoFactorAuth.recoveryCodes` | `[String]` | `required: false, select: false, default: []` | Danh sách 8 mã khôi phục dự phòng đã băm bảo mật qua bcrypt |
 | `createdAt` | `Date` | `timestamps: true` | Thời gian tạo tài khoản |
 | `updatedAt` | `Date` | `timestamps: true` | Thời gian cập nhật tài khoản gần nhất |
 
@@ -46,8 +51,8 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 - `email`: Single Unique Index (Xác thực đăng nhập).
 - `phone`: Single Unique Index (Tra cứu theo số điện thoại).
 - `buildingId`: Single Index (Tra cứu người dùng theo tòa nhà).
-- `{ buildingId: 1, role: 1, approvalStatus: 1 }`: **Compound Index** (Tối ưu truy vấn danh sách cư dân `PENDING` của Ban Quản Lý).
-- `{ buildingId: 1, role: 1 }`: **Compound Index** (Tối ưu tìm kiếm nhanh các tài khoản `BUILDING_ADMIN` để gửi email thông báo).
+- `{ buildingId: 1, role: 1, approvalStatus: 1 }`: **Compound Index** (Tối ưu truy vấn danh sách cư dân `PENDING` của Ban Quản Lý, đồng thời che phủ truy vấn `buildingId + role`).
+- `{ 'twoFactorAuth.enabled': 1 }`: **Sparse Index** (Tối ưu tìm kiếm và kiểm tra nhanh các tài khoản đã kích hoạt bảo vệ 2FA).
 
 ---
 
@@ -125,6 +130,7 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
   "apartment": "A1204",
   "approvalStatus": "ACTIVE",
   "avatar": "https://res.cloudinary.com/drngsxvb3/image/upload/v1788768429/user-image_kmnk9y.png",
+  "twoFactorEnabled": false,
   "createdAt": "2026-09-01T08:00:00.000Z",
   "updatedAt": "2026-09-07T12:00:00.000Z"
 }
@@ -245,16 +251,22 @@ Bảng dưới đây mô tả chi tiết từng thuộc tính trong thực thể
 3. **Quản lý lưu trữ đám mây Cloudinary**:
    - Khi cập nhật hoặc xóa avatar, hệ thống luôn kiểm tra `user.avatar !== DEFAULT_AVATAR_URL` trước khi gọi Cloudinary SDK để không vô tình xóa ảnh mặc định dùng chung.
    - Thao tác xóa file đám mây được bọc try/catch an toàn, không làm ngắt quãng luồng cập nhật cơ sở dữ liệu nếu xảy ra sự cố mạng với Cloudinary.
-4. **Ẩn mật khẩu và mã băm Token tuyệt đối**:
-   - Tất cả các phương thức truy vấn hồ sơ đều gắn `.select('-password -refreshTokenHash')`.
+4. **Bảo vệ dữ liệu nhạy cảm ở mức Schema (`select: false`)**:
+   - Các trường nhạy cảm bao gồm `password`, `refreshTokenHash`, `resetPasswordOtp`, `twoFactorAuth.secret`, `twoFactorAuth.tempSecret`, `twoFactorAuth.recoveryCodes` được cấu hình `select: false` trực tiếp trong Mongoose Schema để triệt tiêu nguy cơ rò rỉ dữ liệu trong mọi truy vấn thông thường.
+   - Các hàm nghiệp vụ nội bộ khi thực sự cần đối soát (như `validateUser`, `changePassword`, `findByIdWithRefreshToken`) sẽ chủ động nạp thêm thông qua cú pháp tường minh `.select('+password')`, `.select('+refreshTokenHash')`.
 5. **Đánh chỉ mục (Indexing)**:
-   - `email` và `phone` được đánh unique index.
-   - `buildingId` được đánh index để tối ưu hóa truy vấn cư dân theo từng tòa nhà.
+   - `email` và `phone`: Single Unique Index (Xác thực đăng nhập và chống trùng lặp).
+   - `buildingId`: Single Index (Tra cứu người dùng theo tòa nhà).
+   - `{ buildingId: 1, role: 1, approvalStatus: 1 }`: Compound Index (Tối ưu truy vấn cư dân chờ duyệt theo tòa nhà, đồng thời che phủ truy vấn `buildingId + role`).
+   - `{ 'twoFactorAuth.enabled': 1 }`: Sparse Index (Tối ưu tìm kiếm các tài khoản đã kích hoạt 2FA).
 6. **Bảo mật mã OTP khôi phục mật khẩu (OTP Security)**:
    - Không lưu mã OTP dưới dạng văn bản thô (plain-text); mã 6 số được băm bằng thuật toán một chiều `SHA-256` trước khi lưu vào trường `resetPasswordOtp`.
    - Giới hạn thời gian hiệu lực chính xác trong 10 phút (`resetPasswordOtpExpires`).
-   - Ngay sau khi hoàn tất đặt lại mật khẩu, mã OTP và thời hạn hết hạn lập tức bị xóa bỏ (`undefined`) để tránh tấn công phát lại (Replay Attacks).
+   - Ngay sau khi hoàn tất đặt lại mật khẩu, mã OTP và thời hạn hết hạn lập tức bị xóa bỏ (`$unset`) để tránh tấn công phát lại (Replay Attacks).
    - Áp dụng kiểm tra giãn cách thời gian (`lastResetPasswordRequestedAt`): Người dùng bắt buộc chờ tối thiểu 60 giây giữa hai lần yêu cầu liên tiếp.
 7. **Chính sách mật khẩu (Password Policy)**:
    - Mật khẩu lưu trữ luôn được băm qua thuật toán `bcrypt` với muối chuẩn `10 rounds`.
    - Mật khẩu mới bắt buộc có độ dài tối thiểu 8 ký tự (`@MinLength(8)`), đồng bộ với tiêu chuẩn kiểm tra độ mạnh mật khẩu phía ứng dụng di động.
+8. **Bảo mật dữ liệu xác thực hai yếu tố (2FA TOTP Security)**:
+   - Khóa bí mật TOTP (`twoFactorAuth.secret`) được mã hóa đối xứng bằng thuật toán `AES-256-GCM` trước khi lưu vào MongoDB, ngăn chặn nguy cơ lộ khóa ngay cả khi cơ sở dữ liệu bị trích xuất.
+   - Toàn bộ 8 mã khôi phục dự phòng (`twoFactorAuth.recoveryCodes`) đều được băm một chiều bằng `bcrypt (10 rounds)`. Khi người dùng sử dụng một mã để đăng nhập, mã đó sẽ được tự động xóa khỏi danh sách (Single-use Backup Code).

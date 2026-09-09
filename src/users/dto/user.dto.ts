@@ -6,6 +6,7 @@ import {
   MinLength,
   IsMongoId,
 } from 'class-validator';
+import { LockerStatus } from '../../lockers/enums';
 
 // DTO cơ sở chứa các thuộc tính tài khoản cơ bản dùng chung
 export class BaseUserDto {
@@ -103,6 +104,30 @@ export class UploadAvatarResponseDto {
   message: string;
 }
 
+// DTO thông tin trạm tủ được chỉ định cho cư dân tại tòa nhà
+export class AssignedLockerDto {
+  @ApiProperty({ example: '6a95091f1e23b42475f441d3' })
+  id: string;
+
+  @ApiProperty({ example: 'Trạm Tủ Sảnh Chính Tòa S1.01' })
+  name: string;
+
+  @ApiProperty({ example: 'LK-S101-01' })
+  code: string;
+
+  @ApiProperty({
+    example: LockerStatus.ONLINE,
+    enum: LockerStatus,
+  })
+  status: LockerStatus;
+
+  @ApiProperty({ example: 'Cạnh quầy lễ tân sảnh A tầng 1', required: false })
+  locationDescription?: string;
+
+  @ApiProperty({ example: 16, required: false })
+  totalBoxes?: number;
+}
+
 // DTO phản hồi thông tin hồ sơ tài khoản cá nhân kèm tên tòa nhà
 export class UserProfileResponseDto {
   @ApiProperty({ example: '6543210fedcba9876543210f' })
@@ -138,6 +163,18 @@ export class UserProfileResponseDto {
     required: false,
   })
   avatar?: string;
+
+  @ApiProperty({ type: AssignedLockerDto, required: false })
+  assignedLocker?: AssignedLockerDto;
+
+  @ApiProperty({ example: '028 3822 6868', required: false })
+  buildingHotline?: string;
+
+  @ApiProperty({ example: 'bql.s101@smartlocker.vn', required: false })
+  buildingEmail?: string;
+
+  @ApiProperty({ example: false, required: false })
+  twoFactorEnabled?: boolean;
 
   @ApiProperty({ required: false })
   createdAt?: Date;
