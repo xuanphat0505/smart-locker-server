@@ -312,3 +312,26 @@ export function ApiChangePasswordDoc() {
     }),
   );
 }
+
+// Tài liệu Swagger cho endpoint cập nhật mã push token thiết bị di động
+export function ApiUpdatePushTokenDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Đăng ký hoặc cập nhật mã push token của thiết bị di động',
+      description:
+        'Cung cấp mã Expo Push Token để hệ thống gửi thông báo đẩy trực tiếp lên thanh trạng thái và cửa sổ thiết bị',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Cập nhật mã push token thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Mã push token không hợp lệ hoặc để trống',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+  );
+}

@@ -272,6 +272,7 @@ export class UsersService {
           status: isApproved ? 'ACTIVE' : 'REJECTED',
           apartment: updated.apartment,
           reason: rejectedReason,
+          devicePushToken: updated.devicePushToken,
         })
         .catch((err) => {
           this.logger.error(
@@ -596,6 +597,17 @@ export class UsersService {
       .findByIdAndUpdate(userId, {
         'twoFactorAuth.recoveryCodes': remainingRecoveryCodes,
       })
+      .exec();
+  }
+
+  // Đăng ký hoặc cập nhật mã push token nhận thông báo trên thiết bị di động
+  async updatePushToken(
+    userId: string,
+    pushToken: string,
+  ): Promise<User | null> {
+    return this.userModel
+      .findByIdAndUpdate(userId, { devicePushToken: pushToken }, { new: true })
+      .select('-password')
       .exec();
   }
 }

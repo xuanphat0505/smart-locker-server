@@ -202,3 +202,14 @@ export class ChangePasswordDto {
   @MinLength(8, { message: 'Mật khẩu mới phải có tối thiểu 8 ký tự' })
   newPassword: string;
 }
+
+// DTO đăng ký hoặc cập nhật mã push token nhận thông báo trên thiết bị di động
+export class UpdatePushTokenDto {
+  @ApiProperty({
+    example: 'ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]',
+    description: 'Mã push token của thiết bị di động do Expo cấp',
+  })
+  @IsString({ message: 'Push token phải là chuỗi ký tự' })
+  @IsNotEmpty({ message: 'Push token không được để trống' })
+  pushToken: string;
+}

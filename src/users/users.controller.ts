@@ -30,6 +30,7 @@ import {
   RejectResidentDto,
   UserProfileResponseDto,
   ChangePasswordDto,
+  UpdatePushTokenDto,
 } from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import {
@@ -45,6 +46,7 @@ import {
   ApiUploadAvatarDoc,
   ApiRemoveAvatarDoc,
   ApiChangePasswordDoc,
+  ApiUpdatePushTokenDoc,
 } from './swagger/user.swagger';
 
 @ApiTags('Users')
@@ -99,6 +101,21 @@ export class UsersController {
       statusCode: HttpStatus.OK,
       message:
         'Đổi mật khẩu thành công. Vui lòng đăng nhập lại trên các thiết bị khác.',
+    };
+  }
+
+  // Đăng ký hoặc cập nhật mã push token nhận thông báo thiết bị di động
+  @Patch('me/push-token')
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN, Role.SHIPPER, Role.RESIDENT)
+  @ApiUpdatePushTokenDoc()
+  async updatePushToken(
+    @Request() req: { user: AuthenticatedUser },
+    @Body() dto: UpdatePushTokenDto,
+  ) {
+    await this.usersService.updatePushToken(req.user.userId, dto.pushToken);
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Cập nhật mã push token thiết bị thành công',
     };
   }
 
