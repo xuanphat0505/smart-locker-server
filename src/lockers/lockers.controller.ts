@@ -42,6 +42,12 @@ export class LockersController {
     return this.lockersService.getBoxesByLockerCode(code);
   }
 
+  // Kiểm tra tình trạng kết nối phần cứng thời gian thực của trạm tủ
+  @Get(':code/health')
+  async getLockerHealth(@Param('code') code: string) {
+    return this.lockersService.getLockerHealth(code);
+  }
+
   // Lấy thông tin trạm tủ chi tiết qua mã Code
   @Get(':code')
   @ApiGetLockerByCodeDoc()

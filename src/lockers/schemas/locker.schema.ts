@@ -54,6 +54,10 @@ export class Locker extends Document {
   })
   status: LockerStatus;
 
+  // Thời điểm nhận tín hiệu nhịp tim hoặc bản tin gần nhất từ phần cứng
+  @Prop({ required: false })
+  lastHeartbeatAt?: Date;
+
   // Mô tả vị trí chi tiết đặt tủ trong tòa nhà
   @Prop({ required: false, trim: true })
   locationDescription?: string;

@@ -134,6 +134,37 @@ export class LockersService {
     return locker;
   }
 
+  // Kiểm tra trạng thái trực tuyến và sức khỏe kết nối thời gian thực của trạm tủ
+  async getLockerHealth(code: string) {
+    const formattedCode = code.trim().toUpperCase();
+    const locker = await this.lockerModel.findOne({ code: formattedCode });
+
+    if (!locker) {
+      throw new NotFoundException(`Trạm tủ với mã ${code} không tồn tại`);
+    }
+
+    const now = Date.now();
+    const lastHeartbeat = locker.lastHeartbeatAt
+      ? new Date(locker.lastHeartbeatAt).getTime()
+      : 0;
+    const diffMs = now - lastHeartbeat;
+
+    // Trạm tủ được coi là Online nếu trạng thái là ONLINE và có nhịp tim trong vòng 75 giây
+    const isOnline =
+      locker.status === LockerStatus.ONLINE &&
+      lastHeartbeat > 0 &&
+      diffMs <= 75000;
+
+    return {
+      code: locker.code,
+      name: locker.name,
+      status: isOnline ? LockerStatus.ONLINE : LockerStatus.OFFLINE,
+      isOnline,
+      lastHeartbeatAt: locker.lastHeartbeatAt || null,
+      latencySeconds: lastHeartbeat > 0 ? Math.round(diffMs / 1000) : null,
+    };
+  }
+
   // Lấy sơ đồ trạng thái toàn bộ các ngăn tủ thời gian thực phục vụ tài xế chọn ngăn
   async getBoxesByLockerCode(code: string) {
     const locker = await this.findByCode(code);

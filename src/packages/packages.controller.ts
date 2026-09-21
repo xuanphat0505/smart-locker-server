@@ -19,6 +19,7 @@ import {
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PickupAuthGuard } from '../auth/guards/pickup-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
@@ -69,6 +70,7 @@ export class PackagesController {
 
   // Nhập mã OTP 6 số tại màn hình trạm tủ để mở khóa lấy bưu kiện
   @Post('pickup/otp')
+  @UseGuards(PickupAuthGuard)
   @ApiPickupOtpDoc()
   async pickupWithOtp(@Body() dto: PickupOtpDto) {
     return this.packagesService.pickupWithOtp(dto);
@@ -76,6 +78,7 @@ export class PackagesController {
 
   // Quét mã QR token trước camera trạm tủ để mở khóa lấy bưu kiện
   @Post('pickup/qr')
+  @UseGuards(PickupAuthGuard)
   @ApiPickupQrDoc()
   async pickupWithQr(@Body() dto: PickupQrDto) {
     return this.packagesService.pickupWithQr(dto);

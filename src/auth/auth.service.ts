@@ -205,7 +205,7 @@ export class AuthService {
     const sanitized = this.sanitizeUser(newUser);
 
     // 1. Phát thông báo điều phối tức thì qua NotificationsService
-    this.notificationsService.notifyNewResident(dto.buildingId, {
+    void this.notificationsService.notifyNewResident(dto.buildingId, {
       id: String(newUser._id),
       name: newUser.name,
       phone: newUser.phone,

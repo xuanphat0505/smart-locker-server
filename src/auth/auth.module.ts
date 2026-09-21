@@ -32,6 +32,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
   ],
   providers: [AuthService, LocalStrategy, JwtStrategy, RolesGuard],
   controllers: [AuthController],
-  exports: [AuthService, RolesGuard],
+  exports: [AuthService, RolesGuard, JwtModule],
 })
 export class AuthModule {}

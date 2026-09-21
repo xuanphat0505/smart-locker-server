@@ -15,6 +15,7 @@ import { PackagesModule } from './packages/packages.module';
 import { MailModule } from './mail/mail.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { UploadModule } from './upload/upload.module';
+import { MqttModule } from './mqtt/mqtt.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { UploadModule } from './upload/upload.module';
     MailModule,
     NotificationsModule,
     UploadModule,
+    MqttModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -65,9 +65,7 @@ export class PushNotificationsService {
         return false;
       }
 
-      const result = (await response.json()) as {
-        data?: Array<{ status: string; message?: string; details?: any }>;
-      };
+      await response.json();
 
       this.logger.log(
         `Đã phát thông báo đẩy thành công tới ${validTokens.length} thiết bị qua Expo`,

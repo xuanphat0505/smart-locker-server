@@ -27,6 +27,7 @@ import { BoxSize, BoxStatus, DoorStatus, LockerAction } from '../lockers/enums';
 import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MqttService } from '../mqtt/mqtt.service';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
 
 @Injectable()
@@ -43,6 +44,7 @@ export class PackagesService {
     @InjectModel(Box.name) private readonly boxModel: Model<Box>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
     private readonly notificationsService: NotificationsService,
+    private readonly mqttService: MqttService,
   ) {}
 
   // Tài xế giao bưu kiện vào ngăn tủ và sinh mã OTP mở tủ cho cư dân
@@ -204,7 +206,7 @@ export class PackagesService {
       },
     });
 
-    this.notificationsService.notifyPackageDropOff(
+    await this.notificationsService.notifyPackageDropOff(
       String(resident._id),
       String(targetBuildingId),
       {
@@ -218,6 +220,15 @@ export class PackagesService {
         droppedOffAt: newPackage.droppedOffAt,
       },
     );
+
+    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
+    this.mqttService
+      .publishDoorUnlock(locker.code, box.boxNumber)
+      .catch((err) => {
+        this.logger.error(
+          `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${box.boxNumber}: ${err}`,
+        );
+      });
 
     return {
       message: 'Gửi bưu kiện vào tủ thành công',
@@ -544,6 +555,15 @@ export class PackagesService {
       status: 'SUCCESS',
     });
 
+    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
+    this.mqttService
+      .publishDoorUnlock(locker.code, pkg.boxNumber)
+      .catch((err) => {
+        this.logger.error(
+          `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
+        );
+      });
+
     return {
       message: `Xác thực mã OTP thành công. Cửa ngăn tủ số ${pkg.boxNumber} đã mở!`,
       package: {
@@ -602,6 +622,15 @@ export class PackagesService {
       performedBy: pkg.receiverPhone,
       status: 'SUCCESS',
     });
+
+    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
+    this.mqttService
+      .publishDoorUnlock(locker.code, pkg.boxNumber)
+      .catch((err) => {
+        this.logger.error(
+          `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
+        );
+      });
 
     return {
       message: `Quét mã QR thành công. Cửa ngăn tủ số ${pkg.boxNumber} đã mở!`,

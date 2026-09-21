@@ -3,4 +3,5 @@ export enum Role {
   BUILDING_ADMIN = 'BUILDING_ADMIN',
   SHIPPER = 'SHIPPER',
   RESIDENT = 'RESIDENT',
+  KIOSK = 'KIOSK',
 }

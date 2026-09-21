@@ -40,6 +40,7 @@
     "cloudinary": "^2.11.0",
     "firebase-admin": "^14.3.0",
     "mongoose": "^9.4.1",
+    "mqtt": "^5.15.2",
     "nodemailer": "^9.1.1",
     "otplib": "^12.0.1",
     "passport": "^0.7.0",

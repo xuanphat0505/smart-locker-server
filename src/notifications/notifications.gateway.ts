@@ -78,6 +78,58 @@ export class NotificationsGateway
     }
   }
 
+  // Cho phép Mobile App tham gia phòng theo dõi trạng thái trạm tủ đồ IoT thời gian thực
+  @SubscribeMessage('join_locker')
+  async handleJoinLocker(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { lockerCode: string },
+  ): Promise<void> {
+    if (payload?.lockerCode) {
+      const roomName = `locker_${payload.lockerCode.trim().toUpperCase()}`;
+      await client.join(roomName);
+      this.logger.log(`Client ${client.id} đã tham gia phòng tủ: ${roomName}`);
+      client.emit('joined_locker', {
+        room: roomName,
+        message: `Đã kết nối phòng trạm tủ ${payload.lockerCode.trim().toUpperCase()}`,
+      });
+    }
+  }
+
+  // Cho phép Mobile App rời khỏi phòng theo dõi trạm tủ
+  @SubscribeMessage('leave_locker')
+  async handleLeaveLocker(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { lockerCode: string },
+  ): Promise<void> {
+    if (payload?.lockerCode) {
+      const roomName = `locker_${payload.lockerCode.trim().toUpperCase()}`;
+      await client.leave(roomName);
+      this.logger.log(`Client ${client.id} đã rời khỏi phòng tủ: ${roomName}`);
+    }
+  }
+
+  // Phát sóng trạng thái cảm biến phần cứng tủ đồ tới các client đang theo dõi trạm
+  notifyHardwareStatus(
+    lockerCode: string,
+    eventData: {
+      boxNumber: number;
+      event: string;
+      doorStatus: 'OPEN' | 'CLOSED';
+      hasItem: boolean;
+      timestamp?: number;
+    },
+  ): void {
+    const roomName = `locker_${lockerCode.trim().toUpperCase()}`;
+    this.logger.log(
+      `Phát sự kiện HARDWARE_STATUS tới phòng ${roomName}: [${eventData.event}] Ngăn #${eventData.boxNumber}, Cửa: ${eventData.doorStatus}, Hàng: ${eventData.hasItem}`,
+    );
+    this.server.to(roomName).emit('HARDWARE_STATUS', {
+      lockerCode: lockerCode.trim().toUpperCase(),
+      ...eventData,
+      timestamp: eventData.timestamp || Date.now(),
+    });
+  }
+
   // Phát thông báo hồ sơ cư dân mới cho Ban Quản Lý tòa nhà
   notifyNewResident(
     buildingId: string,

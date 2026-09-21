@@ -14,6 +14,9 @@ import { Locker, LockerSchema } from '../lockers/schemas/locker.schema';
 import { Box, BoxSchema } from '../lockers/schemas/box.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { MqttModule } from '../mqtt/mqtt.module';
+import { AuthModule } from '../auth/auth.module';
+import { PickupAuthGuard } from '../auth/guards/pickup-auth.guard';
 import { PackagesController } from './packages.controller';
 import { PackagesService } from './packages.service';
 
@@ -27,10 +30,12 @@ import { PackagesService } from './packages.service';
       { name: Box.name, schema: BoxSchema },
       { name: User.name, schema: UserSchema },
     ]),
+    AuthModule,
     NotificationsModule,
+    MqttModule,
   ],
   controllers: [PackagesController],
-  providers: [PackagesService],
+  providers: [PackagesService, PickupAuthGuard],
   exports: [PackagesService],
 })
 export class PackagesModule {}

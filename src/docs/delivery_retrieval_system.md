@@ -11,12 +11,13 @@
 ## 1. Tổng Quan Hệ Thống
 
 Hệ thống giao nhận hàng Smart Locker cung cấp nền tảng tự động hóa việc giao nhận bưu kiện tại các khu đô thị và chung cư:
-- **Shipper (Tài Xế Giao Hàng - Khách Vãng Lai / No Auth)**: Không cần tài khoản $\rightarrow$ Quét mã QR trạm tủ $\rightarrow$ Tra cứu cư dân theo SĐT $\rightarrow$ Chọn cỡ ngăn $\rightarrow$ Bỏ hàng và đóng cửa tủ $\rightarrow$ Hỗ trợ gửi liên tiếp nhiều đơn trong 1 phiên (Batch Drop-off).
-- **Resident (Cư Dân Nhận Hàng - JWT Auth)**: Nhận thông báo tức thì (Push Notification) $\rightarrow$ Hỗ trợ **4 phương thức nhận hàng linh hoạt 24/7**:
+- **Shipper (Tài Xế Giao Hàng - Khách Vãng Lai / No Auth)**: Không cần tài khoản $\rightarrow$ Quét mã QR trạm tủ $\rightarrow$ **AI OCR quét nhãn đơn (tự trích xuất Mã vận đơn, SĐT cư dân, Hãng ship)** $\rightarrow$ Hệ thống auto-lookup căn hộ $\rightarrow$ Chọn cỡ ngăn $\rightarrow$ Bỏ hàng và đóng cửa tủ $\rightarrow$ **Tự động xuất ảnh POD (Proof of Delivery) có Watermark vào máy Shipper để nộp Shopee/TikTok** $\rightarrow$ Hỗ trợ gửi liên tiếp nhiều đơn trong 1 phiên (Batch Drop-off).
+- **Resident (Cư Dân Nhận Hàng - JWT Auth)**: Nhận thông báo tức thì (Push Notification) kèm ảnh kiện hàng $\rightarrow$ Hỗ trợ **5 phương thức nhận hàng linh hoạt 24/7**:
   1. *Nhập mã OTP 6 số tại màn hình Kiosk của trạm tủ*.
   2. *Quét mã QR Token động trước Camera của trạm tủ*.
   3. *Bấm nút "Mở Tủ Từ Xa" trên ứng dụng di động React Native (Remote Proximity Unlock)*.
   4. *Ủy quyền cho người thân/bạn bè nhận hộ qua mã OTP chia sẻ*.
+  5. *Xác thực khuôn mặt AI (Face Verification + Anti-Spoofing)* cho các đơn hàng bảo mật cao hoặc trải nghiệm nhận hàng rảnh tay.
 - **Building Admin & System Admin**: Giám sát tình trạng trạm tủ, tỷ lệ lấp đầy ngăn tủ, quản lý bưu kiện quá hạn lưu kho và hỗ trợ mở tủ khẩn cấp từ xa khi xảy ra sự cố.
 
 ```mermaid
@@ -25,27 +26,34 @@ graph TD
         LK[Locker: Trạm Tủ Thông Minh]
         BX[Box: 11-24 Ngăn Tủ Tự Động]
         IOT[IoT Controller: ESP32 / Relay Control]
+        CAM[Camera Kiosk / Mobile Cam]
         LK --- BX
         BX --- IOT
+        LK --- CAM
     end
 
-    subgraph "TẦNG DỊCH VỤ (BACKEND NESTJS)"
+    subgraph "TẦNG DỊCH VỤ (BACKEND NESTJS & AI SERVICES)"
         ML[Lockers Service: Quản lý trạm & ngăn tủ]
         MP[Packages Service: Xử lý Giao & Nhận]
         MN[Notifications Service: Gửi Push Token]
         MA[Auth & Users: Phân quyền Cư Dân & BQL]
+        AI_OCR[AI OCR Engine: Nhận diện nhãn đơn & Tạo ảnh POD]
+        AI_FACE[AI Face Engine: Liveness Check & FaceNet So Khớp]
     end
 
     subgraph "ỨNG DỤNG NGƯỜI DÙNG (CLIENT LAYER)"
-        SP[Guest Shipper: Quét QR Tủ gửi hàng nhanh - Không cần Account]
-        RD[Mobile App Resident: Nhận mã OTP, Quét QR, Mở từ xa]
-        SCR[Màn hình cảm ứng tại Tủ: Nhập OTP mở cửa]
+        SP[Guest Shipper: AI OCR Quét Nhãn - Không cần Account]
+        RD[Mobile App Resident: Nhận OTP, Quét QR, Mở từ xa, Face ID]
+        SCR[Màn hình cảm ứng tại Tủ: Nhập OTP / Quét Face]
         REL[Người thân nhận hộ: Nhập OTP được chia sẻ]
     end
 
-    SP -->|POST /packages/drop-off (Public)| MP
+    SP -->|POST /packages/drop-off & OCR| MP
+    SP -.-> AI_OCR
     RD -->|GET /packages/my-packages (JWT)| MP
     RD -->|POST /packages/:id/remote-unlock (JWT)| MP
+    RD -->|POST /packages/:id/pickup-face (JWT)| MP
+    RD -.-> AI_FACE
     SCR -->|POST /packages/pickup/otp (Public)| MP
     REL -->|POST /packages/pickup/otp (Public)| MP
     MP --> ML
@@ -141,6 +149,10 @@ export enum DoorStatus {
 | `failedAttempts` | `Number` | `default: 0` | Số lần nhập sai mã OTP liên tiếp tại trạm tủ (chống Brute-force dò mã) |
 | `lockedUntil` | `Date` | `optional` | Khóa tạm thời quyền mở ngăn bằng OTP nếu nhập sai quá 5 lần (ví dụ: khóa 15 phút) |
 | `status` | `String (Enum)` | `enum: PackageStatus, default: WAITING_FOR_PICKUP` | Trạng thái bưu kiện |
+| `podImageUrl` | `String` | `optional, trim` | Ảnh chụp bưu phẩm / Bằng chứng giao hàng (POD) có Watermark trạm & ngăn tủ |
+| `isHighValue` | `Boolean` | `default: false` | Đơn hàng giá trị cao / nhạy cảm yêu cầu xác thực khuôn mặt (Face Verification) |
+| `pickupMethod`| `String (Enum)` | `enum: ['OTP', 'QR', 'REMOTE', 'FACE'], optional` | Phương thức thực tế cư dân đã sử dụng để mở tủ nhận hàng |
+| `faceAuditImageUrl`| `String` | `optional, trim` | Ảnh chụp khuôn mặt lúc cư dân mở tủ (phục vụ đối soát chống chối bỏ) |
 | `droppedOffAt` | `Date` | `required` | Thời điểm shipper bỏ hàng vào tủ thành công |
 | `pickedUpAt` | `Date` | `optional` | Thời điểm cư dân mở tủ lấy hàng |
 | `expiredAt` | `Date` | `required` | Hạn chót lấy hàng (mặc định: `droppedOffAt + 48 giờ`) |
@@ -168,7 +180,7 @@ export enum PackageStatus {
 | `action` | `String (Enum)` | `enum: LockerAction` | Hành động mở/đóng tủ |
 | `performedBy` | `String` | `required` | Số điện thoại hoặc User ID người thực hiện |
 | `status` | `String` | `SUCCESS` hoặc `FAILED` | Kết quả thực thi |
-| `metadata` | `Object` | `optional` | Dữ liệu ngữ cảnh kỹ thuật: trạng thái cảm biến IR/Reed switch, mã lỗi phần cứng |
+| `metadata` | `Object` | `optional` | Dữ liệu ngữ cảnh kỹ thuật: trạng thái cảm biến IR/Reed switch, điểm tin cậy AI Face match, mã lỗi phần cứng |
 | `createdAt` | `Date` | `timestamps: true` | Thời điểm thực hiện |
 
 ```typescript
@@ -176,7 +188,8 @@ export enum LockerAction {
   DROP_OFF = 'DROP_OFF',                     // Tài xế mở tủ gửi hàng
   PICKUP_OTP = 'PICKUP_OTP',                 // Cư dân nhập mã OTP nhận hàng
   PICKUP_QR = 'PICKUP_QR',                   // Cư dân quét mã QR nhận hàng
-  REMOTE_OPEN = 'REMOTE_OPEN',               // Ban quản lý mở tủ từ xa
+  PICKUP_FACE = 'PICKUP_FACE',               // Cư dân quét khuôn mặt AI nhận hàng
+  REMOTE_OPEN = 'REMOTE_OPEN',               // Cư dân / BQL mở tủ từ xa qua ứng dụng
   FORCE_OPEN = 'FORCE_OPEN',                 // Mở cưỡng bức khi xử lý sự cố kỹ thuật
   OVERDUE_RETRIEVAL = 'OVERDUE_RETRIEVAL',   // Thu hồi bưu phẩm quá hạn lưu kho
 }
@@ -204,62 +217,79 @@ PackageSchema.index({ status: 1, expiredAt: 1 });            // Cronjob tự đ�
 
 ## 3. Quy Trình Nghiệp Vụ & Sequence Diagrams
 
-### 3.1. Quy Trình Shipper Gửi Hàng (Drop-off Flow - No Auth)
+### 3.1. Quy Trình Shipper Gửi Hàng Tích Hợp AI OCR & Smart POD (Drop-off Flow - No Auth)
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Shipper as Tài Xế Giao Hàng
+    participant Client as Web/App Gửi Hàng (Camera)
+    participant AI as AI Engine (OCR & POD Watermark)
     participant Backend as NestJS Server
     participant DB as MongoDB
     actor Resident as Cư Dân Nhận Hàng
 
-    Shipper->>Backend: 1. GET /lockers/:code/boxes
+    Shipper->>Client: 1. Quét mã QR dán trên thân tủ
+    Client->>Backend: GET /lockers/:code/boxes
     Backend->>DB: Lấy danh sách Box của trạm tủ
-    DB-->>Backend: Sơ đồ ngăn tủ & trạng thái (AVAILABLE, OCCUPIED)
-    Backend-->>Shipper: Trả về sơ đồ hiển thị 2D
+    DB-->>Backend: Sơ đồ ngăn tủ & số ngăn trống (S/M/L)
+    Backend-->>Client: Trả về sơ đồ hiển thị 2D cho Shipper
 
-    Shipper->>Backend: 2. GET /lockers/lookup-receiver?phone=0912345678&lockerCode=LK-S101-01
+    Shipper->>Client: 2. Hướng camera vào nhãn đơn hàng (Shopee/TikTok/GHN...)
+    Client->>AI: Chạy AI OCR trích xuất tự động: Mã vận đơn, SĐT nhận, Hãng ship
+    AI-->>Client: Trả về { trackingNumber: "SPX839201948", receiverPhone: "0912345678", carrierName: "Shopee Xpress" }
+
+    Client->>Backend: 3. GET /lockers/lookup-receiver?phone=0912345678&lockerCode=LK-S101-01
     Backend->>DB: Kiểm tra Cư Dân có active và thuộc tòa nhà hay không
     DB-->>Backend: Cư dân hợp lệ (Nguyễn Văn A - Căn A1204)
-    Backend-->>Shipper: Trả về thông tin căn hộ đối soát
+    Backend-->>Client: Trả về thông tin căn hộ đối soát (Hiện thẻ xanh xác nhận)
 
-    Shipper->>Backend: 3. POST /packages/drop-off { lockerCode, receiverPhone, shipperPhone, carrierName, boxNumber, boxSize, trackingNumber }
+    Shipper->>Client: 4. Chạm chọn kích thước [S] / [M] / [L] & Bấm "Mở Ngăn Tủ"
+    Client->>Backend: POST /packages/drop-off { lockerCode, receiverPhone, shipperPhone, carrierName, boxNumber, boxSize, trackingNumber, podImageUrl }
     Backend->>DB: Khóa Box (status = OCCUPIED)
     Backend->>Backend: Sinh OTP 6 chữ số ngẫu nhiên + QR Token bí mật
     Backend->>DB: Tạo Package (status = WAITING_FOR_PICKUP, expiredAt = now + 48h)
     Backend->>DB: Ghi nhật ký LockerLog (action = DROP_OFF)
-    
-    Backend->>Resident: 4. Bắn Push Notification: "Bưu kiện mới tại Ngăn #5 - OTP: 384920"
-    Backend-->>Shipper: 201 Created { packageId, boxNumber: 5, action: "OPEN_DOOR", message: "Cửa ngăn tủ số 5 đã mở" }
+    Backend-->>Client: 201 Created { packageId, boxNumber: 5, action: "OPEN_DOOR", message: "Cửa ngăn tủ số 5 đã mở" }
+
+    Shipper->>Client: 5. Đặt hàng vào ngăn số 5, đóng cửa tủ
+    Client->>AI: Đóng Watermark: [SMART LOCKER POD - TRẠM SẢNH A - NGĂN #05 - 12/09/2026 14:30]
+    AI-->>Client: Tự động lưu ảnh POD vào Album điện thoại Shipper (Dùng nộp cho Shopee/TikTok)
+    Backend->>Resident: 6. Bắn Push Notification: "Bưu kiện mới tại Ngăn #5 - OTP: 384920" kèm ảnh gói hàng
 ```
 
 ---
 
-### 3.2. Bảng Tổng Hợp 4 Phương Thức Nhận Hàng Của Cư Dân (Resident Retrieval Channels)
+### 3.2. Bảng Tổng Hợp 5 Phương Thức Nhận Hàng Của Cư Dân (Resident Retrieval Channels)
 
-Hệ thống cung cấp 4 phương thức nhận hàng linh hoạt để tối ưu trải nghiệm trong mọi hoàn cảnh thực tế:
+Hệ thống cung cấp 5 phương thức nhận hàng linh hoạt để tối ưu trải nghiệm trong mọi hoàn cảnh thực tế:
 
-| Phương thức | Thiết bị tương tác | Cơ chế xác thực | Kịch bản sử dụng tối ưu | Ưu điểm nổi bật |
-| :--- | :--- | :--- | :--- | :--- |
-| **1. Nhập OTP tại Kiosk** | Màn hình cảm ứng / Phím số tại tủ | Mã OTP 6 chữ số ngẫu nhiên (`pinCode`) | Khi không mang điện thoại hoặc hết pin; có thể xem mã từ tin nhắn/email | Không phụ thuộc vào thiết bị di động tại thời điểm nhận |
-| **2. Quét QR tại tủ** | Camera Kiosk của trạm tủ + Mobile App | Token động 32 ký tự hex (`qrCodeToken`) | Nhận hàng nhanh 1 chạm khi đứng trước trạm tủ | Không chạm màn hình công cộng, chống nhìn lén mã PIN |
-| **3. Mở tủ từ xa trên App**| Ứng dụng di động React Native | JWT Token định danh Cư dân (`Bearer Token`) | Vừa bước ra khỏi thang máy sảnh chung cư, đứng gần trạm tủ | Tiện lợi tối đa, tự động mở sẵn ngăn tủ khi đến gần |
-| **4. Ủy quyền nhận hộ** | Tin nhắn SMS, Zalo, Messenger | Mã OTP 6 số được chia sẻ trực tiếp | Khi cư dân vắng nhà, đi công tác, nhờ người thân/hàng xóm lấy hộ | An toàn, mã tự hủy ngay sau khi ngăn tủ được mở |
+| Phương thức | Thiết bị tương tác | Cơ chế xác thực | Yêu cầu BLE (1–3m) / Vị trí vật lý | Kịch bản sử dụng tối ưu | Ưu điểm nổi bật |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **1A. Nhập OTP tại Kiosk** | Màn hình cảm ứng / Phím số tại tủ | Mã OTP 6 chữ số ngẫu nhiên (`pinCode`) | **KHÔNG CẦN BLE** *(Hiển nhiên đã có mặt tại tủ)* | Khi không mang điện thoại, hết pin; người thân lấy hộ | Không phụ thuộc vào điện thoại thông minh hay sóng Bluetooth |
+| **1B. Nhập OTP trên Mobile App** | Ứng dụng di động Citibox (`/locker/enter-pin`) | Mã OTP 6 số + Đối soát bưu kiện | **Ưu tiên BLE $\le$ 3m** *(Mở tức thì)*<br/>*Nếu ở xa: Yêu cầu xác nhận cảnh báo* | Khi không muốn chạm màn hình Kiosk công cộng hoặc camera quét QR bị mờ | Tận dụng bàn phím riêng trên điện thoại, phòng tránh mở nhầm từ xa |
+| **2. Quét QR tại tủ** | Camera Kiosk của trạm tủ + Mobile App | Token động 32 ký tự hex (`qrCodeToken`) | **Có mặt tại tủ** *(Camera Kiosk quét màn hình app)* | Nhận hàng nhanh 1 chạm khi đứng trước trạm tủ | Không chạm màn hình công cộng, chống nhìn lén mã PIN |
+| **3. Mở tủ từ xa trên App**| Ứng dụng di động React Native | JWT Token định danh Cư dân (`Bearer Token`) | **BẮT BUỘC BLE $\le$ 3m** *(Hoặc đã quét QR trạm tủ)* | Vừa bước ra khỏi thang máy sảnh chung cư, đứng gần trạm tủ | Tiện lợi tối đa, tự động mở sẵn ngăn tủ khi đến gần (1 chạm 1s) |
+| **4. Ủy quyền nhận hộ** | Tin nhắn SMS, Zalo, Messenger | Mã OTP 6 số được chia sẻ trực tiếp | **KHÔNG CẦN BLE** *(Người nhận hộ nhập tại Kiosk)* | Khi cư dân vắng nhà, đi công tác, nhờ người thân/hàng xóm lấy hộ | An toàn, mã tự hủy ngay sau khi ngăn tủ được mở |
+| **5. Quét khuôn mặt AI (Face ID)** | Camera trước Mobile App hoặc Camera Kiosk | **FaceNet Cosine Similarity ($\ge 0.75$) + Anti-Spoofing** | **Có mặt tại trạm** | Đơn hàng giá trị cao / nhạy cảm hoặc muốn trải nghiệm rảnh tay | Bảo mật sinh trắc học tối đa, chống chối bỏ, lưu audit ảnh |
 
 ---
 
-### 3.3. Phương Thức 1: Nhận Hàng Bằng Mã OTP Tại Màn Hình Kiosk (Pick-up OTP Flow)
+### 3.3. Phương Thức 1: Nhận Hàng Bằng Mã OTP (Pick-up OTP Flow)
+
+#### 3.3.1. Luồng Nhập OTP Trực Tiếp Tại Màn Hình Kiosk Tủ (Physical Kiosk - Không Cần Bluetooth)
+Cư dân hoặc người được ủy quyền nhận hộ không cần điện thoại, không cần Bluetooth. Chỉ cần đứng trước màn hình trạm tủ và nhập 6 số OTP.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Resident as Cư Dân
+    actor Resident as Cư Dân / Người Nhận Hộ
     participant LockerKiosk as Màn Hình Cảm Ứng Tại Tủ Locker
     participant Backend as NestJS Server
     participant DB as MongoDB
 
     Resident->>LockerKiosk: 1. Bấm nút "Nhận Hàng" & Nhập mã OTP 6 số
+    Note over Resident, LockerKiosk: Người dùng thao tác trực tiếp trên màn hình Kiosk.<br/>100% không cần Bluetooth hay thiết bị di động.
     LockerKiosk->>Backend: 2. POST /packages/pickup/otp { pinCode, lockerCode }
     Backend->>DB: Tìm Package có pinCode & lockerCode & status = WAITING_FOR_PICKUP
 
@@ -273,6 +303,17 @@ sequenceDiagram
         Backend-->>LockerKiosk: 400 Bad Request { message: "Mã OTP không chính xác hoặc đơn hàng đã được lấy" }
     end
 ```
+
+#### 3.3.2. Luồng Nhập OTP Trên Ứng Dụng Di Động (Mobile App OTP Entry - Phối Hợp BLE)
+Khi cư dân mở tính năng **"Enter PIN"** trên ứng dụng di động:
+1. **Bản chất của mã OTP**: Là bằng chứng xác thực *quyền sở hữu/nhận kiện hàng* (Authentication).
+2. **Bản chất của BLE 1–3m**: Là bằng chứng xác thực *vị trí vật lý của người nhận trước trạm tủ* (Proximity Proof).
+   - **Nếu phát hiện sóng BLE trong 1–3m** (hoặc đã quét QR trạm tủ): Tủ mở ngay lập tức (1-chạm) vì đã thỏa mãn cả 2 điều kiện: Có mã + Đang đứng cạnh tủ.
+   - **Nếu KHÔNG phát hiện BLE** (người dùng ở xa, tắt Bluetooth hoặc trong nhà):
+     - Hệ thống ngăn chặn việc tự động mở để tránh sự cố **Ghost Unlock** (cửa tủ bật mở toang ở sảnh chung cư khi chủ nhân chưa xuống nhận).
+     - Ứng dụng cung cấp 2 giải pháp linh hoạt:
+       - *Lựa chọn A*: Yêu cầu cư dân xác nhận qua hộp thoại cảnh báo: *"Cửa tủ sẽ bật mở ngay lập tức tại trạm. Bạn có chắc chắn muốn mở từ xa?"* $\rightarrow$ Khi bấm xác nhận, lệnh mới được gửi tới trạm.
+       - *Lựa chọn B*: Nhắc nhở cư dân có thể nhập 6 số OTP này trực tiếp trên màn hình Kiosk của tủ khi đi xuống sảnh.
 
 ---
 
@@ -350,6 +391,48 @@ sequenceDiagram
 
 ---
 
+### 3.7. Phương Thức 5: Nhận Hàng Bằng Xác Thực Khuôn Mặt AI (Pick-up Face Verification Flow)
+
+> **Mục đích:** Dành cho các đơn hàng giá trị cao (High-Value Parcels) hoặc cư dân muốn trải nghiệm lấy hàng rảnh tay, bảo mật chống chối bỏ.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Resident as Cư Dân (Mobile App / Kiosk Camera)
+    participant Client as App / Camera Kiosk
+    participant Backend as NestJS Server
+    participant AI as Face AI Engine (Anti-Spoofing & FaceNet)
+    participant DB as MongoDB
+    participant IOT as Bộ Điều Khiển Tủ (ESP32)
+
+    Resident->>Client: 1. Chọn bưu kiện & Bấm "Xác thực khuôn mặt mở tủ"
+    Client->>Client: 2. Bật camera trước, chụp ảnh khuôn mặt người nhận
+    Client->>Backend: 3. POST /packages/:id/pickup-face { faceImage } (Bearer JWT)
+
+    Backend->>AI: 4. Kiểm tra Liveness (Anti-Spoofing Model)
+    alt Phát hiện ảnh in / màn hình điện thoại giả mạo (Fake/Spoof)
+        AI-->>Backend: Result = SPOOF_DETECTED
+        Backend-->>Client: 403 Forbidden { message: "Phát hiện giả mạo hình ảnh! Vui lòng dùng mặt thật" }
+    else Là người thật (Real Person)
+        Backend->>DB: Lấy vector khuôn mặt đã đăng ký của User (faceEmbedding)
+        Backend->>AI: 5. Trích xuất embedding ảnh mới & Tính Cosine Similarity
+        alt Cosine Similarity < 0.75 (Không khớp)
+            AI-->>Backend: Result = MISMATCH (score = 0.54)
+            Backend-->>Client: 400 Bad Request { message: "Khuôn mặt không khớp với chủ tài khoản" }
+        else Cosine Similarity >= 0.75 (Khớp danh tính)
+            AI-->>Backend: Result = MATCH (score = 0.88)
+            Backend->>DB: Cập nhật Package (status = PICKED_UP, pickupMethod = 'FACE', faceAuditImageUrl, pickedUpAt = now)
+            Backend->>DB: Giải phóng Box (status = AVAILABLE)
+            Backend->>DB: Ghi nhật ký LockerLog (action = PICKUP_FACE, metadata: { faceMatchScore: 0.88 })
+            Backend->>IOT: Kích hoạt lệnh mở chốt ngăn tủ
+            Backend-->>Client: 200 OK { boxNumber: 5, action: "OPEN_DOOR", message: "Xác thực khuôn mặt thành công! Ngăn số 5 đã mở" }
+            Note over Resident, IOT: Cửa ngăn tủ số 5 bật mở, cư dân lấy hàng và đóng cửa.
+        end
+    end
+```
+
+---
+
 ## 4. Ma Trận Phân Quyền API (RBAC Matrix)
 
 | Chức Năng | Method & Endpoint | Phân Quyền (RBAC) | Mô Tả Nghiệp Vụ |
@@ -357,6 +440,7 @@ sequenceDiagram
 | **Thông tin trạm tủ** | `GET /lockers/:code` | **Public** | Lấy thông tin trạm tủ khi quét QR trên thân tủ |
 | **Sơ đồ các ngăn tủ** | `GET /lockers/:code/boxes` | **Public** | Lấy danh sách toàn bộ các ngăn tủ (trống/bận, cỡ S/M/L) |
 | **Tra cứu Cư Dân** | `GET /lockers/lookup-receiver` | **Public** | Tra cứu tên & căn hộ theo SĐT trước khi mở tủ gửi |
+| **AI OCR nhãn đơn hàng**| `POST /packages/ocr-label` | **Public (Guest)** | AI quét ảnh nhãn đơn hàng trích xuất Mã vận đơn, SĐT, Hãng |
 | **Shipper gửi hàng** | `POST /packages/drop-off` | **Public (Guest)** | Gửi hàng vào tủ, mở chốt điện từ, sinh OTP cho cư dân |
 | **Bưu kiện của tôi** | `GET /packages/my-packages` | `RESIDENT` *(JWT)* | Cư dân xem các đơn đang chờ nhận và lịch sử nhận |
 | **Chi tiết bưu kiện** | `GET /packages/:id` | `RESIDENT` *(JWT)* | Xem chi tiết kiện hàng, vị trí ngăn, mã OTP, hạn lấy |
@@ -364,6 +448,8 @@ sequenceDiagram
 | **Nhập OTP mở tủ** | `POST /packages/pickup/otp` | **Public / Kiosk Tủ**| Nhập OTP 6 số tại màn hình tủ để mở khóa lấy đồ |
 | **Quét QR mở tủ** | `POST /packages/pickup/qr` | **Public / Kiosk Tủ**| Quét QR Token trước camera tủ để mở khóa lấy đồ |
 | **Mở tủ từ xa qua App** | `POST /packages/:id/remote-unlock`| `RESIDENT` *(JWT)* | Cư dân bấm mở khóa tủ từ xa khi đứng cạnh trạm tủ |
+| **Quét mặt nhận hàng AI**| `POST /packages/:id/pickup-face` | `RESIDENT` *(JWT)* / Kiosk| Nhận hàng bằng khuôn mặt (Anti-spoofing + FaceNet) |
+| **Đăng ký khuôn mặt** | `POST /users/enroll-face` | `RESIDENT` *(JWT)* | Cư dân chụp ảnh đăng ký vector khuôn mặt mẫu (Embedding) |
 | **Danh sách trạm tủ** | `GET /lockers` | `SYSTEM_ADMIN`, `BUILDING_ADMIN` | Quản trị viên xem mạng lưới trạm tủ toàn hệ thống |
 | **Tạo trạm tủ mới** | `POST /lockers` | `SYSTEM_ADMIN` | Thêm trạm tủ mới (auto sinh các ngăn tủ con) |
 | **Mở tủ khẩn cấp từ xa**| `POST /lockers/:id/remote-open`| `BUILDING_ADMIN` | BQL mở khẩn cấp khi kẹt cửa hoặc xử lý sự cố |
@@ -609,6 +695,90 @@ sequenceDiagram
 
 ---
 
+### 5.9. `POST /packages/ocr-label` (AI OCR Quét Nhãn Đơn Hàng Tự Động Điền)
+- **Quyền truy cập**: Public / Shipper Web & App
+- **Request Body**:
+```json
+{
+  "labelImage": "data:image/jpeg;base64,..."
+}
+```
+- **Hành vi xử lý**:
+  1. Đưa ảnh qua AI OCR Engine.
+  2. Dùng Pattern Matching trích xuất: Mã vận đơn (tracking number), SĐT người nhận (10 số), và Hãng giao vận.
+- **Response (200 OK)**:
+```json
+{
+  "success": true,
+  "data": {
+    "trackingNumber": "SPX839201948",
+    "receiverPhone": "0912345678",
+    "carrierName": "Shopee Xpress",
+    "confidence": 0.96
+  }
+}
+```
+
+---
+
+### 5.10. `POST /packages/:id/pickup-face` (Cư Dân Quét Khuôn Mặt AI Nhận Hàng)
+- **Quyền truy cập**: `RESIDENT` *(JWT)* hoặc Camera Kiosk Tủ
+- **Header**: `Authorization: Bearer <RESIDENT_TOKEN>`
+- **Params**: `id` - Mã ObjectId của bưu kiện
+- **Request Body**:
+```json
+{
+  "faceImage": "data:image/jpeg;base64,...",
+  "lockerCode": "LK-S101-01"
+}
+```
+- **Hành vi xử lý**:
+  1. Kiểm tra Liveness (Anti-Spoofing): Chặn nếu là ảnh in giấy hoặc ảnh chụp màn hình điện thoại (`403 Forbidden`).
+  2. Lấy vector khuôn mặt `faceEmbedding` của Cư dân từ Database.
+  3. Trích xuất embedding ảnh mới và tính Cosine Similarity:
+     - Nếu Score $\ge 0.75$: Khớp danh tính $\rightarrow$ Cập nhật Package (`status = PICKED_UP`, `pickupMethod = 'FACE'`), giải phóng Box, ghi nhật ký `LockerLog` (`action = PICKUP_FACE`), gửi lệnh mở chốt khóa `OPEN_DOOR`.
+     - Nếu Score $< 0.75$: Báo lỗi `400 Bad Request` ("Khuôn mặt không khớp với chủ tài khoản").
+- **Response Thành Công (200 OK)**:
+```json
+{
+  "message": "Xác thực khuôn mặt thành công. Cửa ngăn tủ số 4 đã mở!",
+  "matchScore": 0.88,
+  "package": {
+    "_id": "6b1234567890abcdef123456",
+    "trackingNumber": "SPX839201948",
+    "status": "PICKED_UP",
+    "pickupMethod": "FACE",
+    "pickedUpAt": "2026-09-08T15:00:00.000Z"
+  },
+  "boxNumber": 4,
+  "action": "OPEN_DOOR"
+}
+```
+
+---
+
+### 5.11. `POST /users/enroll-face` (Cư Dân Đăng Ký Vector Khuôn Mặt Mẫu)
+- **Quyền truy cập**: `RESIDENT` *(JWT)*
+- **Header**: `Authorization: Bearer <RESIDENT_TOKEN>`
+- **Request Body**:
+```json
+{
+  "faceImage": "data:image/jpeg;base64,..."
+}
+```
+- **Hành vi xử lý**:
+  1. Phát hiện khuôn mặt hợp lệ và trích xuất vector đặc trưng 128 chiều bằng MobileFaceNet.
+  2. Lưu vector vào trường `faceEmbedding` của User và đánh dấu `isFaceEnrolled = true`.
+- **Response (200 OK)**:
+```json
+{
+  "message": "Đăng ký khuôn mặt thành công",
+  "isFaceEnrolled": true
+}
+```
+
+---
+
 ## 6. Lộ Trình Triển Khai Backend (NestJS Roadmap)
 
 ```text
@@ -623,27 +793,30 @@ GIAI ĐOẠN 1: MODULE LOCKERS & BOXES (HẠ TẦNG TRẠM TỦ)
 ├── 1.4 Khởi tạo LockersController & Swagger Docs
 └── 1.5 Cập nhật seed.ts: Nạp sẵn trạm LK-S101-01 (Vinhomes) & LK-TECCO-01 (Tecco Linh Đông)
 
-GIAI ĐOẠN 2: MODULE PACKAGES & GIAO NHẬN (CORE BUSINESS LOGIC)
-├── 2.1 Khởi tạo Enums: PackageStatus, LockerAction
-├── 2.2 Khởi tạo Schemas Mongoose: PackageSchema (hỗ trợ shipperPhone/carrierName), LockerLogSchema
+GIAI ĐOẠN 2: MODULE PACKAGES & GIAO NHẬN TÍCH HỢP AI (CORE BUSINESS LOGIC)
+├── 2.1 Khởi tạo Enums: PackageStatus, LockerAction (thêm PICKUP_FACE)
+├── 2.2 Khởi tạo Schemas Mongoose: PackageSchema (thêm podImageUrl, isHighValue, pickupMethod), LockerLogSchema
 ├── 2.3 Xây dựng PackagesService:
-│   ├── POST /packages/drop-off (No-Auth Guest Shipper gửi hàng, khóa Box, sinh OTP 6 số & QR Token)
+│   ├── POST /packages/ocr-label (AI OCR nhận diện nhanh nhãn đơn hàng)
+│   ├── POST /packages/drop-off (No-Auth Guest Shipper gửi hàng, khóa Box, sinh OTP & tạo ảnh POD có Watermark)
 │   ├── GET /packages/my-packages (Cư Dân xem danh sách đơn đang chờ nhận)
 │   ├── GET /packages/:id (Chi tiết kiện hàng)
 │   ├── GET /packages/:id/qr-token (Lấy QR Token động phục vụ render QR nhận hàng)
 │   ├── POST /packages/pickup/otp (Phương thức 1 & 4: Nhập OTP mở tủ trực tiếp/nhận hộ)
 │   ├── POST /packages/pickup/qr (Phương thức 2: Quét mã QR trước camera tủ Kiosk)
-│   └── POST /packages/:id/remote-unlock (Phương thức 3: Cư dân bấm mở tủ từ xa qua App)
-├── 2.4 Xây dựng module Notifications (Tích hợp Expo Push Service gửi thông báo tới app Cư Dân)
+│   ├── POST /packages/:id/remote-unlock (Phương thức 3: Cư dân bấm mở tủ từ xa qua App)
+│   └── POST /packages/:id/pickup-face (Phương thức 5: Xác thực khuôn mặt AI + Anti-Spoofing)
+├── 2.4 Xây dựng module Notifications (Tích hợp Expo Push Service gửi thông báo kèm ảnh gói hàng tới app Cư Dân)
 └── 2.5 Cronjob tự động chuyển trạng thái đơn hàng quá hạn (OVERDUE sau 48h)
 
 GIAI ĐOẠN 3: TÍCH HỢP TOÀN DIỆN MOBILE APP & KIOSK
-├── 3.1 Nối API Mobile Shipper: drop-off/scan -> locker/select -> locker/interaction -> drop-off/summary
-├── 3.2 Nối API Mobile Resident (Hỗ trợ trọn vẹn 4 phương thức):
+├── 3.1 Nối API Mobile Shipper: drop-off/scan (AI OCR) -> locker/select -> locker/interaction -> drop-off/summary (Auto-save POD)
+├── 3.2 Nối API Mobile Resident (Hỗ trợ trọn vẹn 5 phương thức):
 │   ├── Trang chủ (readyShipment) -> Bưu phẩm chi tiết
 │   ├── Modal hiển thị mã OTP & Nút chia sẻ nhận hộ (Phương thức 1 & 4)
 │   ├── Modal hiển thị mã QR động để quét trước camera tủ (Phương thức 2)
-│   └── Nút "Mở Tủ Từ Xa" (Remote Unlock) kích hoạt Solenoid khi đứng gần tủ (Phương thức 3)
-└── 3.3 Kiểm thử E2E trọn vẹn luồng từ khi Shipper bỏ đồ đến khi Cư Dân nhận hàng qua cả 4 kênh
+│   ├── Nút "Mở Tủ Từ Xa" (Remote Unlock) kích hoạt Solenoid khi đứng gần tủ (Phương thức 3)
+│   └── Modal "Xác Thực Khuôn Mặt (Face ID)" mở camera trước quét mặt nhận hàng (Phương thức 5)
+└── 3.3 Kiểm thử E2E trọn vẹn luồng từ khi Shipper bỏ đồ đến khi Cư Dân nhận hàng qua cả 5 kênh
 ```
 
