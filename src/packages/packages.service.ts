@@ -503,16 +503,59 @@ export class PackagesService {
     };
   }
 
+  // Thẩm định tính hợp lệ của mã QR Token động sinh từ màn hình LCD trạm tủ
+  verifyDynamicQrToken(
+    apiKey: string,
+    stationCode: string,
+    token: string,
+  ): boolean {
+    if (!apiKey || !stationCode || !token) {
+      return false;
+    }
+
+    const cleanToken = token.trim().toUpperCase();
+    const currentWindow = Math.floor(Date.now() / 1000 / 60);
+    const windowsToCheck = [currentWindow, currentWindow - 1];
+
+    return windowsToCheck.some((window) => {
+      const payload = `${apiKey}${stationCode.trim().toUpperCase()}${window}`;
+      const expectedToken = crypto
+        .createHash('sha256')
+        .update(payload)
+        .digest('hex')
+        .substring(0, 6)
+        .toUpperCase();
+      return expectedToken === cleanToken;
+    });
+  }
+
   // Xác thực mã OTP 6 số tại màn hình trạm tủ để mở khóa lấy đồ
   async pickupWithOtp(dto: PickupOtpDto) {
-    const locker = await this.lockerModel.findOne({
-      code: dto.lockerCode.trim().toUpperCase(),
-    });
+    const locker = await this.lockerModel
+      .findOne({
+        code: dto.lockerCode.trim().toUpperCase(),
+      })
+      .select('+apiKey');
 
     if (!locker) {
       throw new NotFoundException(
         `Trạm tủ với mã ${dto.lockerCode} không tồn tại`,
       );
+    }
+
+    // Kiểm tra tính hợp lệ của mã QR Token động nếu được gửi kèm để chứng minh cự ly gần
+    if (dto.qrProofToken) {
+      const isTokenValid = this.verifyDynamicQrToken(
+        locker.apiKey,
+        locker.code,
+        dto.qrProofToken,
+      );
+
+      if (!isTokenValid) {
+        throw new BadRequestException(
+          'Mã QR trạm tủ đã hết hạn hoặc không hợp lệ. Vui lòng chạm vào màn hình trạm tủ để làm mới mã QR.',
+        );
+      }
     }
 
     const pkg = await this.packageModel.findOne({
@@ -550,9 +593,14 @@ export class PackagesService {
       lockerId: locker._id,
       boxNumber: pkg.boxNumber,
       packageId: pkg._id,
-      action: LockerAction.PICKUP_OTP,
+      action: dto.qrProofToken
+        ? LockerAction.PICKUP_QR
+        : LockerAction.PICKUP_OTP,
       performedBy: pkg.receiverPhone,
       status: 'SUCCESS',
+      metadata: dto.qrProofToken
+        ? { verificationMethod: 'DYNAMIC_QR' }
+        : undefined,
     });
 
     // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
