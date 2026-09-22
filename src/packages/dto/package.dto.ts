@@ -94,7 +94,7 @@ export class DropOffPackageDto {
   sessionToken?: string;
 }
 
-// DTO nhận bưu kiện bằng mã OTP 6 số tại màn hình Kiosk trạm tủ
+// DTO nhận bưu kiện bằng mã OTP 6 số tại màn hình Kiosk trạm tủ hoặc ứng dụng di động
 export class PickupOtpDto {
   @ApiProperty({
     example: 'LK-S101-01',
@@ -112,6 +112,16 @@ export class PickupOtpDto {
   @Length(6, 6, { message: 'Mã OTP phải bao gồm đúng 6 chữ số' })
   @IsNotEmpty()
   pinCode: string;
+
+  @ApiPropertyOptional({
+    example: 'A8F3B9',
+    description:
+      'Mã token xác thực cự ly gần quét từ mã QR động trên màn hình LCD của trạm tủ',
+  })
+  @IsString()
+  @IsOptional()
+  @Length(6, 6, { message: 'Mã QR Token phải bao gồm đúng 6 ký tự' })
+  qrProofToken?: string;
 }
 
 // DTO nhận bưu kiện bằng quét mã QR Token trước camera trạm tủ
