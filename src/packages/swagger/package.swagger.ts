@@ -1,5 +1,11 @@
 import { applyDecorators } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 
 // Tài liệu Swagger cho endpoint tài xế gửi bưu kiện vào ngăn tủ
 export function ApiDropOffPackageDoc() {
@@ -127,6 +133,60 @@ export function ApiPickupQrDoc() {
     ApiResponse({
       status: 404,
       description: 'Trạm tủ không tồn tại',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint nhận diện khuôn mặt mở tủ nhận hàng
+export function ApiPickupFaceDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Nhận diện khuôn mặt cư dân tại trạm tủ để nhận hàng',
+      description:
+        'API phục vụ camera tại trạm tủ Kiosk, kiểm tra độ sống khuôn mặt (liveness) và so khớp 1:N với các đơn hàng chờ nhận để phát lệnh mở tủ',
+    }),
+    ApiConsumes('multipart/form-data', 'application/json'),
+    ApiBody({
+      schema: {
+        type: 'object',
+        required: ['lockerCode'],
+        properties: {
+          lockerCode: {
+            type: 'string',
+            example: 'LK-S101-01',
+            description: 'Mã trạm tủ thông minh',
+          },
+          file: {
+            type: 'string',
+            format: 'binary',
+            description: 'File ảnh chụp khuôn mặt từ camera trạm tủ',
+          },
+          imageBase64: {
+            type: 'string',
+            description: 'Chuỗi Base64 ảnh khuôn mặt nếu không upload file',
+          },
+        },
+      },
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Xác thực khuôn mặt thành công, lệnh mở cửa ngăn tủ đã phát',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Dữ liệu không hợp lệ hoặc thiếu ảnh',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Khuôn mặt không khớp với cư dân nào có đơn chờ tại tủ',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Phát hiện giả mạo khuôn mặt màn hình hoặc ảnh in',
+    }),
+    ApiResponse({
+      status: 404,
+      description: 'Trạm tủ không tồn tại hoặc không có đơn hàng chờ nhận',
     }),
   );
 }

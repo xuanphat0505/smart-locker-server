@@ -192,3 +192,23 @@ export class VerifyFirebaseTokenDto {
   @IsNotEmpty({ message: 'Firebase idToken không được để trống' })
   idToken: string;
 }
+
+// DTO nhận diện khuôn mặt tại trạm tủ để mở khóa lấy bưu kiện
+export class PickupFaceDto {
+  @ApiProperty({
+    example: 'LK-S101-01',
+    description: 'Mã trạm tủ cư dân đang đứng quét khuôn mặt',
+  })
+  @IsString({ message: 'Mã trạm tủ phải là chuỗi ký tự' })
+  @IsNotEmpty({ message: 'Mã trạm tủ không được để trống' })
+  lockerCode: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Chuỗi Base64 của ảnh chụp từ camera (tùy chọn nếu gửi qua multipart file)',
+    example: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+  })
+  @IsOptional()
+  @IsString({ message: 'Chuỗi Base64 phải là chuỗi hợp lệ' })
+  imageBase64?: string;
+}

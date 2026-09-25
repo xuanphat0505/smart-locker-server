@@ -13,6 +13,7 @@ import { RolesGuard } from './guards/roles.guard';
 import { BuildingsModule } from '../buildings/buildings.module';
 import { MailModule } from '../mail/mail.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AiModule } from '../ai/ai.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     BuildingsModule,
     MailModule,
     NotificationsModule,
+    AiModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

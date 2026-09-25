@@ -176,6 +176,16 @@ export class UserProfileResponseDto {
   @ApiProperty({ example: false, required: false })
   twoFactorEnabled?: boolean;
 
+  @ApiProperty({
+    type: Object,
+    example: { enabled: true, enrolledAt: '2026-09-24T12:00:00.000Z' },
+    required: false,
+  })
+  faceAuth?: {
+    enabled: boolean;
+    enrolledAt?: Date;
+  };
+
   @ApiProperty({ required: false })
   createdAt?: Date;
 

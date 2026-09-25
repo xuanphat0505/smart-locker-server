@@ -3,12 +3,17 @@ import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { json, urlencoded } from 'express';
 
 // Khởi tạo ứng dụng NestJS cấu hình pipe kiểm thực dữ liệu và tài liệu OpenAPI Swagger
 async function bootstrap() {
   const configService = new ConfigService();
 
   const app = await NestFactory.create(AppModule);
+
+  // Cấu hình giới hạn dung lượng tải trọng JSON lên 10MB để xử lý ảnh chân dung
+  app.use(json({ limit: '10mb' }));
+  app.use(urlencoded({ extended: true, limit: '10mb' }));
 
   // cors config
   app.enableCors({

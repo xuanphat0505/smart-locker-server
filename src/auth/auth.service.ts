@@ -39,6 +39,7 @@ import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import { BuildingsService } from '../buildings/buildings.service';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { FaceVerificationService } from '../ai/services/face-verification.service';
 
 @Injectable()
 export class AuthService {
@@ -51,6 +52,7 @@ export class AuthService {
     private buildingsService: BuildingsService,
     private mailService: MailService,
     private notificationsService: NotificationsService,
+    private faceVerificationService: FaceVerificationService,
   ) {}
 
   // Xác thực thông tin người dùng từ email và mật khẩu rồi trả về thông tin user đã làm sạch
@@ -191,6 +193,40 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
+    // Chuyển đổi và xử lý kiểm tra sinh trắc học khuôn mặt nếu cư dân cung cấp ảnh chính diện
+    const imageBuffers: Buffer[] = [];
+    const rawImage =
+      dto.faceImageBase64 ||
+      (Array.isArray(dto.imagesBase64) ? dto.imagesBase64[0] : undefined);
+    if (rawImage && typeof rawImage === 'string' && rawImage.trim()) {
+      const cleanBase64 = rawImage.replace(/^data:image\/\w+;base64,/, '');
+      const buf = Buffer.from(cleanBase64, 'base64');
+      if (buf.length > 0) {
+        imageBuffers.push(buf);
+      }
+    }
+
+    let faceAuthData = {
+      enabled: false,
+      embedding: [] as number[],
+      enrolledAt: null as unknown as Date,
+    };
+    let avatarUrl: string | undefined;
+
+    if (imageBuffers.length > 0) {
+      const processed =
+        await this.faceVerificationService.processEnrollmentBuffers(
+          imageBuffers,
+          dto.email,
+        );
+      faceAuthData = {
+        enabled: true,
+        embedding: processed.embedding,
+        enrolledAt: new Date(),
+      };
+      avatarUrl = processed.avatarUrl;
+    }
+
     const newUser = await this.usersService.create({
       name: dto.name.trim(),
       email: dto.email.toLowerCase().trim(),
@@ -200,6 +236,8 @@ export class AuthService {
       buildingId: new Types.ObjectId(dto.buildingId),
       apartment: dto.apartment.trim(),
       approvalStatus: ApprovalStatus.PENDING,
+      avatar: avatarUrl || undefined,
+      faceAuth: faceAuthData,
     });
 
     const sanitized = this.sanitizeUser(newUser);

@@ -4,8 +4,10 @@ import {
   IsString,
   MinLength,
   Matches,
+  IsOptional,
+  IsArray,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 // DTO định nghĩa thông tin đăng nhập tài khoản bằng email và mật khẩu
 export class LoginDto {
@@ -91,6 +93,29 @@ export class RegisterResidentDto {
   @IsNotEmpty({ message: 'Số căn hộ không được để trống' })
   @IsString({ message: 'Số căn hộ phải là chuỗi ký tự (ví dụ: 12B, A402)' })
   apartment: string;
+
+  @ApiPropertyOptional({
+    description: 'Chuỗi Base64 của ảnh khuôn mặt selfie (ảnh đơn lẻ)',
+    example: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+  })
+  @IsOptional()
+  @IsString({ message: 'Chuỗi Base64 ảnh khuôn mặt phải là văn bản hợp lệ' })
+  faceImageBase64?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Mảng chuỗi Base64 của 3 góc mặt: chính diện, nghiêng trái, nghiêng phải',
+    example: [
+      'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+      'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+      'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+    ],
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray({ message: 'Danh sách ảnh khuôn mặt phải là một mảng' })
+  @IsString({ each: true, message: 'Từng ảnh Base64 phải là chuỗi hợp lệ' })
+  imagesBase64?: string[];
 }
 
 // DTO định nghĩa dữ liệu đầu vào cho yêu cầu đăng ký tài khoản Tài Xế Giao Hàng

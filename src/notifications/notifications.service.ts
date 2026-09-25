@@ -122,7 +122,7 @@ export class NotificationsService {
       {
         $set: { isRead: true, readAt: new Date() },
       },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     if (!notification) {
