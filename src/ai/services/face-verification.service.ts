@@ -21,15 +21,18 @@ import {
 } from '../../lockers/enums/locker.enums';
 import { AntiSpoofingService } from './anti-spoofing.service';
 import { FaceRecognitionService } from './face-recognition.service';
+import { FaceDetectorService } from './face-detector.service';
 import { MqttService } from '../../mqtt/mqtt.service';
 import {
   VerifyFaceHardwareResult,
   EnrollFaceResult,
   ProcessEnrollmentResult,
+  CheckFaceMatchResult,
+  FaceDetectionMetadata,
 } from '../interfaces/face-verification.interface';
 
-// Nguong do tuong dong Cosine Similarity chap nhan trung khop cho vector 512 chieu ArcFace
-const FACE_MATCH_THRESHOLD = 0.65;
+// Ngưỡng độ tương đồng Cosine Similarity chấp nhận trùng khớp cho vector 512 chiều ArcFace sau khi crop khuôn mặt
+const FACE_MATCH_THRESHOLD = 0.48;
 
 @Injectable()
 export class FaceVerificationService {
@@ -48,6 +51,7 @@ export class FaceVerificationService {
     private readonly lockerLogModel: Model<LockerLog>,
     private readonly antiSpoofingService: AntiSpoofingService,
     private readonly faceRecognitionService: FaceRecognitionService,
+    private readonly faceDetectorService: FaceDetectorService,
     private readonly mqttService: MqttService,
   ) {}
 
@@ -184,7 +188,8 @@ export class FaceVerificationService {
       })
       .populate({
         path: 'residentId',
-        select: '+faceAuth.embedding name phone apartment avatar',
+        select:
+          '+faceAuth.embedding faceAuth.enabled name phone apartment avatar',
       });
 
     if (activePackages.length === 0) {
@@ -293,6 +298,192 @@ export class FaceVerificationService {
       matchScore: bestMatch.score,
       livenessScore: livenessResult.livenessScore,
       inferenceTimeMs: totalInferenceTime,
+    };
+  }
+
+  // Kiểm tra so khớp khuôn mặt thử nghiệm với các đơn hàng tại trạm tủ mà không thực hiện mở tủ hay đổi dữ liệu
+  async checkMatchOnly(
+    lockerCode: string,
+    imageBuffer: Buffer,
+    options?: { includeCroppedFace?: boolean },
+  ): Promise<CheckFaceMatchResult> {
+    const startTime = Date.now();
+
+    // Bước 1: Phát hiện vị trí và 5 điểm mốc khuôn mặt bằng mô hình YuNet
+    const detectedFace = await this.faceDetectorService.detectFace(imageBuffer);
+    const faceDetectionInfo: FaceDetectionMetadata = detectedFace
+      ? {
+          detected: true,
+          confidence: Math.round(detectedFace.score * 1000) / 1000,
+          box: {
+            x1: Math.round(detectedFace.x1 * 1000) / 1000,
+            y1: Math.round(detectedFace.y1 * 1000) / 1000,
+            x2: Math.round(detectedFace.x2 * 1000) / 1000,
+            y2: Math.round(detectedFace.y2 * 1000) / 1000,
+          },
+          landmarks: detectedFace.landmarks,
+          cropApplied: true,
+        }
+      : {
+          detected: false,
+          cropApplied: false,
+        };
+
+    let croppedFaceBase64: string | undefined;
+    if (options?.includeCroppedFace && detectedFace) {
+      try {
+        const croppedBuffer =
+          await this.faceDetectorService.cropFace(imageBuffer);
+        croppedFaceBase64 = `data:image/jpeg;base64,${croppedBuffer.toString('base64')}`;
+      } catch (err: unknown) {
+        this.logger.warn(`Không thể tạo chuỗi Base64 ảnh crop: ${String(err)}`);
+      }
+    }
+
+    // Bước 2: Kiểm tra tính chân thực khuôn mặt bằng mô hình Anti-Spoofing
+    const livenessResult =
+      await this.antiSpoofingService.checkLiveness(imageBuffer);
+
+    if (!livenessResult.isReal) {
+      return {
+        isMatch: false,
+        isReal: false,
+        matchScore: 0,
+        livenessScore: Math.round(livenessResult.livenessScore * 1000) / 1000,
+        threshold: FACE_MATCH_THRESHOLD,
+        candidateCount: 0,
+        faceDetection: faceDetectionInfo,
+        croppedFaceBase64,
+        message: `Phát hiện ảnh giả mạo hoặc không đạt chuẩn (Điểm thật: ${(livenessResult.livenessScore * 100).toFixed(1)}%)`,
+        inferenceTimeMs: Date.now() - startTime,
+        dryRun: true,
+      };
+    }
+
+    // Bước 3: Trích xuất vector đặc trưng 512 chiều từ ảnh khuôn mặt (đã tự động crop)
+    const inputEmbedding =
+      await this.faceRecognitionService.extractEmbedding(imageBuffer);
+
+    // Bước 4: Tìm kiếm trạm tủ theo mã code
+    const locker = await this.lockerModel.findOne({
+      code: lockerCode.trim().toUpperCase(),
+    });
+
+    if (!locker) {
+      throw new NotFoundException(
+        `Trạm tủ với mã ${lockerCode} không tồn tại trong hệ thống`,
+      );
+    }
+
+    // Bước 5: Lấy danh sách các bưu kiện đang chờ nhận tại trạm tủ này
+    const activePackages = await this.packageModel
+      .find({
+        lockerId: locker._id,
+        status: PackageStatus.WAITING_FOR_PICKUP,
+      })
+      .populate({
+        path: 'residentId',
+        select:
+          '+faceAuth.embedding faceAuth.enabled name phone apartment avatar',
+      });
+
+    if (activePackages.length === 0) {
+      return {
+        isMatch: false,
+        isReal: true,
+        matchScore: 0,
+        livenessScore: Math.round(livenessResult.livenessScore * 1000) / 1000,
+        threshold: FACE_MATCH_THRESHOLD,
+        candidateCount: 0,
+        faceDetection: faceDetectionInfo,
+        croppedFaceBase64,
+        message: 'Hiện không có bưu kiện nào đang chờ nhận tại trạm tủ này',
+        inferenceTimeMs: Date.now() - startTime,
+        dryRun: true,
+      };
+    }
+
+    // Bước 6: So khớp 1:N với các cư dân có Face ID
+    let bestMatch: {
+      package: Package;
+      resident: User;
+      score: number;
+    } | null = null;
+    let validCandidates = 0;
+
+    for (const pkg of activePackages) {
+      const resident = pkg.residentId as unknown as User;
+      if (
+        !resident ||
+        !resident.faceAuth?.enabled ||
+        !resident.faceAuth?.embedding ||
+        resident.faceAuth.embedding.length === 0
+      ) {
+        continue;
+      }
+
+      validCandidates++;
+      const similarity = this.faceRecognitionService.calculateCosineSimilarity(
+        inputEmbedding,
+        resident.faceAuth.embedding,
+      );
+
+      if (similarity >= FACE_MATCH_THRESHOLD) {
+        if (!bestMatch || similarity > bestMatch.score) {
+          bestMatch = {
+            package: pkg,
+            resident,
+            score: similarity,
+          };
+        }
+      }
+    }
+
+    const inferenceTimeMs = Date.now() - startTime;
+
+    if (!bestMatch) {
+      return {
+        isMatch: false,
+        isReal: true,
+        matchScore: 0,
+        livenessScore: Math.round(livenessResult.livenessScore * 1000) / 1000,
+        threshold: FACE_MATCH_THRESHOLD,
+        candidateCount: validCandidates,
+        faceDetection: faceDetectionInfo,
+        croppedFaceBase64,
+        message: `Khuôn mặt không trùng khớp với bất kỳ cư dân nào có đơn chờ tại tủ (${validCandidates} cư dân có Face ID)`,
+        inferenceTimeMs,
+        dryRun: true,
+      };
+    }
+
+    const matchedPkg = bestMatch.package;
+    const matchedResident = bestMatch.resident;
+
+    return {
+      isMatch: true,
+      isReal: true,
+      matchScore: Math.round(bestMatch.score * 1000) / 1000,
+      livenessScore: Math.round(livenessResult.livenessScore * 1000) / 1000,
+      threshold: FACE_MATCH_THRESHOLD,
+      faceDetection: faceDetectionInfo,
+      croppedFaceBase64,
+      matchedResident: {
+        userId: String(matchedResident._id),
+        name: matchedResident.name,
+        phone: matchedResident.phone,
+        apartment: matchedResident.apartment,
+      },
+      matchedPackage: {
+        packageId: String(matchedPkg._id),
+        trackingNumber: matchedPkg.trackingNumber,
+        boxNumber: matchedPkg.boxNumber,
+        status: matchedPkg.status,
+      },
+      candidateCount: validCandidates,
+      message: `Xác thực khớp với cư dân ${matchedResident.name} - Ô tủ số ${matchedPkg.boxNumber}`,
+      inferenceTimeMs,
+      dryRun: true,
     };
   }
 }

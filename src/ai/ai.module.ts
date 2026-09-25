@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AntiSpoofingService } from './services/anti-spoofing.service';
 import { FaceRecognitionService } from './services/face-recognition.service';
 import { FaceVerificationService } from './services/face-verification.service';
+import { FaceDetectorService } from './services/face-detector.service';
 import { AiController } from './ai.controller';
 import { Package, PackageSchema } from '../packages/schemas/package.schema';
 import { Locker, LockerSchema } from '../lockers/schemas/locker.schema';
@@ -30,11 +31,13 @@ import { MqttModule } from '../mqtt/mqtt.module';
     AntiSpoofingService,
     FaceRecognitionService,
     FaceVerificationService,
+    FaceDetectorService,
   ],
   exports: [
     AntiSpoofingService,
     FaceRecognitionService,
     FaceVerificationService,
+    FaceDetectorService,
   ],
 })
 export class AiModule {}
