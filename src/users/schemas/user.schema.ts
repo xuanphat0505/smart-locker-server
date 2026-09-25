@@ -102,6 +102,22 @@ export class User extends Document {
     tempSecret?: string;
     recoveryCodes: string[];
   };
+
+  // Quan ly trang thai va vector dac trung nhan dien khuon mat sinh trac hoc
+  @Prop({
+    type: {
+      enabled: { type: Boolean, default: false },
+      embedding: { type: [Number], select: false, default: [] },
+      enrolledAt: { type: Date, default: null },
+    },
+    _id: false,
+    default: () => ({ enabled: false, embedding: [] }),
+  })
+  faceAuth: {
+    enabled: boolean;
+    embedding?: number[];
+    enrolledAt?: Date;
+  };
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
@@ -111,3 +127,6 @@ UserSchema.index({ buildingId: 1, role: 1, approvalStatus: 1 });
 
 // Chỉ mục tìm kiếm nhanh tài khoản đang bật 2FA
 UserSchema.index({ 'twoFactorAuth.enabled': 1 }, { sparse: true });
+
+// Chi muc tim kiem nhanh cu dan da dang ky Face ID
+UserSchema.index({ 'faceAuth.enabled': 1 }, { sparse: true });

@@ -28,6 +28,10 @@ export interface SanitizedUser {
   twoFactorAuth?: {
     enabled: boolean;
   };
+  faceAuth?: {
+    enabled: boolean;
+    enrolledAt?: Date;
+  };
   createdAt?: Date;
   updatedAt?: Date;
 }

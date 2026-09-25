@@ -9,6 +9,7 @@ import { BuildingsModule } from '../buildings/buildings.module';
 import { MailModule } from '../mail/mail.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { UploadModule } from '../upload/upload.module';
+import { AiModule } from '../ai/ai.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { UploadModule } from '../upload/upload.module';
     MailModule,
     NotificationsModule,
     UploadModule,
+    AiModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

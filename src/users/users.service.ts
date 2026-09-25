@@ -18,12 +18,14 @@ import {
   CreateResidentDto,
   UserProfileResponseDto,
   ChangePasswordDto,
+  EnrollFaceDto,
 } from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { BuildingsService } from '../buildings/buildings.service';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UploadService } from '../upload/upload.service';
+import { FaceVerificationService } from '../ai/services/face-verification.service';
 
 @Injectable()
 export class UsersService {
@@ -36,6 +38,7 @@ export class UsersService {
     private mailService: MailService,
     private notificationsService: NotificationsService,
     private uploadService: UploadService,
+    private faceVerificationService: FaceVerificationService,
   ) {}
 
   // Tạo mới một tài khoản người dùng vào cơ sở dữ liệu
@@ -209,6 +212,10 @@ export class UsersService {
       buildingHotline: populatedBuilding?.hotline,
       buildingEmail: populatedBuilding?.managementEmail,
       twoFactorEnabled: user.twoFactorAuth?.enabled ?? false,
+      faceAuth: {
+        enabled: user.faceAuth?.enabled ?? false,
+        enrolledAt: user.faceAuth?.enrolledAt,
+      },
     };
   }
 
@@ -609,5 +616,36 @@ export class UsersService {
       .findByIdAndUpdate(userId, { devicePushToken: pushToken }, { new: true })
       .select('-password')
       .exec();
+  }
+
+  // Đăng ký nhận diện khuôn mặt Face ID cho cư dân thông qua dịch vụ AI
+  async enrollFace(
+    userId: string,
+    body?: EnrollFaceDto,
+    file?: Express.Multer.File,
+  ) {
+    const imageBuffers: Buffer[] = [];
+    const rawImage =
+      body?.faceImageBase64 ||
+      body?.imageBase64 ||
+      (Array.isArray(body?.imagesBase64) ? body.imagesBase64[0] : undefined);
+
+    if (rawImage && typeof rawImage === 'string' && rawImage.trim()) {
+      const cleanBase64 = rawImage.replace(/^data:image\/\w+;base64,/, '');
+      const buf = Buffer.from(cleanBase64, 'base64');
+      if (buf.length > 0) {
+        imageBuffers.push(buf);
+      }
+    } else if (file?.buffer) {
+      imageBuffers.push(file.buffer);
+    }
+
+    if (imageBuffers.length === 0) {
+      throw new BadRequestException(
+        'Vui lòng tải lên ảnh chân dung hoặc cung cấp ảnh Base64 hợp lệ để đăng ký',
+      );
+    }
+
+    return this.faceVerificationService.enrollFace(userId, imageBuffers);
   }
 }

@@ -335,3 +335,49 @@ export function ApiUpdatePushTokenDoc() {
     }),
   );
 }
+
+// Tài liệu Swagger cho endpoint đăng ký hoặc cập nhật Face ID của cư dân
+export function ApiEnrollFaceDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Đăng ký hoặc cập nhật nhận diện khuôn mặt Face ID',
+      description:
+        'Kiểm tra độ chân thực liveness, trích xuất vector đặc trưng lưu vào user.faceAuth để mở khóa tủ thông minh',
+    }),
+    ApiConsumes('multipart/form-data', 'application/json'),
+    ApiBody({
+      schema: {
+        type: 'object',
+        properties: {
+          file: {
+            type: 'string',
+            format: 'binary',
+            description: 'File ảnh chân dung selfie (JPG, PNG, WebP)',
+          },
+          imageBase64: {
+            type: 'string',
+            description: 'Chuỗi Base64 ảnh selfie đơn lẻ nếu không upload file',
+          },
+          imagesBase64: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Mảng chuỗi Base64 các góc mặt (chính diện, nghiêng trái, nghiêng phải)',
+          },
+        },
+      },
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Đăng ký Face ID thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Khuôn mặt giả mạo hoặc ảnh không hợp lệ',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+  );
+}

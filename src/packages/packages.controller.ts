@@ -6,13 +6,17 @@ import {
   Body,
   UseGuards,
   Request,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { PackagesService } from './packages.service';
 import {
   DropOffPackageDto,
   PickupOtpDto,
   PickupQrDto,
+  PickupFaceDto,
   SendShipperOtpDto,
   VerifyShipperOtpDto,
   VerifyFirebaseTokenDto,
@@ -30,6 +34,7 @@ import {
   ApiGetQrTokenDoc,
   ApiPickupOtpDoc,
   ApiPickupQrDoc,
+  ApiPickupFaceDoc,
   ApiSendShipperOtpDoc,
   ApiVerifyShipperOtpDoc,
   ApiVerifyFirebaseTokenDoc,
@@ -82,6 +87,18 @@ export class PackagesController {
   @ApiPickupQrDoc()
   async pickupWithQr(@Body() dto: PickupQrDto) {
     return this.packagesService.pickupWithQr(dto);
+  }
+
+  // Nhận diện khuôn mặt cư dân trước camera trạm tủ để mở khóa lấy bưu kiện
+  @Post('pickup/face')
+  @UseGuards(PickupAuthGuard)
+  @ApiPickupFaceDoc()
+  @UseInterceptors(FileInterceptor('file'))
+  async pickupWithFace(
+    @UploadedFile() file?: Express.Multer.File,
+    @Body() dto?: PickupFaceDto,
+  ) {
+    return this.packagesService.pickupWithFace(dto, file);
   }
 
   // Cư dân xem danh sách toàn bộ các bưu kiện của chính mình

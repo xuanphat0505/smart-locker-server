@@ -31,6 +31,7 @@ import {
   UserProfileResponseDto,
   ChangePasswordDto,
   UpdatePushTokenDto,
+  EnrollFaceDto,
 } from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import {
@@ -47,6 +48,7 @@ import {
   ApiRemoveAvatarDoc,
   ApiChangePasswordDoc,
   ApiUpdatePushTokenDoc,
+  ApiEnrollFaceDoc,
 } from './swagger/user.swagger';
 
 @ApiTags('Users')
@@ -116,6 +118,28 @@ export class UsersController {
     return {
       statusCode: HttpStatus.OK,
       message: 'Cập nhật mã push token thiết bị thành công',
+    };
+  }
+
+  // Đăng ký hoặc cập nhật dữ liệu khuôn mặt Face ID của cư dân
+  @Post('enroll-face')
+  @Roles(Role.RESIDENT, Role.SYSTEM_ADMIN)
+  @ApiEnrollFaceDoc()
+  @UseInterceptors(FileInterceptor('file'))
+  async enrollFace(
+    @Request() req: { user: AuthenticatedUser },
+    @UploadedFile() file?: Express.Multer.File,
+    @Body() body?: EnrollFaceDto,
+  ) {
+    const result = await this.usersService.enrollFace(
+      req.user.userId,
+      body,
+      file,
+    );
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Đăng ký nhận diện khuôn mặt Face ID thành công',
+      data: result,
     };
   }
 

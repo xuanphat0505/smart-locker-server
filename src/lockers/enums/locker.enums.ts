@@ -30,6 +30,7 @@ export enum LockerAction {
   DROP_OFF = 'DROP_OFF', // Tài xế mở tủ bỏ kiện hàng vào
   PICKUP_OTP = 'PICKUP_OTP', // Cư dân nhập mã OTP 6 số tại tủ để lấy hàng
   PICKUP_QR = 'PICKUP_QR', // Cư dân quét mã QR token tại tủ để lấy hàng
+  PICKUP_FACE_ID = 'PICKUP_FACE_ID', // Cư dân nhận diện khuôn mặt AI tại tủ để lấy hàng
   REMOTE_OPEN = 'REMOTE_OPEN', // Ban Quản Lý mở khóa khẩn cấp từ xa
   FORCE_OPEN = 'FORCE_OPEN', // Kỹ thuật viên mở cưỡng bức cơ học khi xử lý sự cố kẹt tủ
   OVERDUE_RETRIEVAL = 'OVERDUE_RETRIEVAL', // Thu hồi bưu kiện quá hạn lưu kho

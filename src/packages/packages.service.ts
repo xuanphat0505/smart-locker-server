@@ -18,6 +18,7 @@ import {
   DropOffPackageDto,
   PickupOtpDto,
   PickupQrDto,
+  PickupFaceDto,
   SendShipperOtpDto,
   VerifyShipperOtpDto,
   VerifyFirebaseTokenDto,
@@ -28,6 +29,7 @@ import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MqttService } from '../mqtt/mqtt.service';
+import { FaceVerificationService } from '../ai/services/face-verification.service';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
 
 @Injectable()
@@ -45,6 +47,7 @@ export class PackagesService {
     @InjectModel(User.name) private readonly userModel: Model<User>,
     private readonly notificationsService: NotificationsService,
     private readonly mqttService: MqttService,
+    private readonly faceVerificationService: FaceVerificationService,
   ) {}
 
   // Tài xế giao bưu kiện vào ngăn tủ và sinh mã OTP mở tủ cho cư dân
@@ -287,7 +290,7 @@ export class PackagesService {
         failedAttempts: 0,
         lastResendAt: new Date(),
       },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: 'after' },
     );
 
     this.logger.log(
@@ -406,7 +409,7 @@ export class PackagesService {
           otpExpiresAt: undefined,
           failedAttempts: 0,
         },
-        { upsert: true, new: true },
+        { upsert: true, returnDocument: 'after' },
       );
 
       this.logger.log(
@@ -690,6 +693,53 @@ export class PackagesService {
       },
       boxNumber: pkg.boxNumber,
       action: 'OPEN_DOOR',
+    };
+  }
+
+  // Nhận diện khuôn mặt cư dân trước camera trạm tủ để mở khóa lấy bưu kiện
+  async pickupWithFace(dto?: PickupFaceDto, file?: Express.Multer.File) {
+    if (!dto?.lockerCode) {
+      throw new BadRequestException(
+        'Vui lòng cung cấp mã trạm tủ (lockerCode)',
+      );
+    }
+
+    let imageBuffer: Buffer | null = null;
+
+    if (file?.buffer) {
+      imageBuffer = file.buffer;
+    } else if (dto.imageBase64) {
+      const cleanBase64 = dto.imageBase64.replace(
+        /^data:image\/\w+;base64,/,
+        '',
+      );
+      imageBuffer = Buffer.from(cleanBase64, 'base64');
+    }
+
+    if (!imageBuffer || imageBuffer.length === 0) {
+      throw new BadRequestException(
+        'Vui lòng tải lên file ảnh hoặc cung cấp chuỗi imageBase64 từ camera',
+      );
+    }
+
+    const result = await this.faceVerificationService.verifyAndUnlock(
+      dto.lockerCode,
+      imageBuffer,
+    );
+
+    return {
+      message: `Xác thực khuôn mặt thành công. Cửa ngăn tủ số ${result.boxNumber} đã mở!`,
+      package: {
+        trackingNumber: result.trackingNumber,
+        receiverName: result.residentName,
+        receiverPhone: result.residentPhone,
+        apartment: result.apartment,
+      },
+      boxNumber: result.boxNumber,
+      action: 'OPEN_DOOR',
+      matchScore: result.matchScore,
+      livenessScore: result.livenessScore,
+      inferenceTimeMs: result.inferenceTimeMs,
     };
   }
 
