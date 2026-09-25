@@ -209,3 +209,95 @@ export function ApiVerifyFaceHardwareDoc() {
     }),
   );
 }
+
+// Tai lieu Swagger cho endpoint kiem tra so khop khuon mat doc lap (dry-run, khong mo tu)
+export function ApiVerifyMatchDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Kiem tra so khop khuon mat thu nghiem (Dry-run, khong mo tu)',
+      description:
+        'Chuyen anh va ma tram tu vao de kiem tra liveness va so khop voi cu dan co don hang ma khong thay doi du lieu bưu kien hay mo chot solenoid',
+    }),
+    ApiConsumes('multipart/form-data', 'application/json'),
+    ApiBody({
+      schema: {
+        type: 'object',
+        properties: {
+          lockerCode: {
+            type: 'string',
+            example: 'LK-TECCO-01',
+            description:
+              'Ma tram tu (co the truyen trong body, query param hoac header x-locker-code)',
+          },
+          file: {
+            type: 'string',
+            format: 'binary',
+            description: 'File anh chup chan dung can so khop (JPG, PNG)',
+          },
+          imageBase64: {
+            type: 'string',
+            description: 'Chuoi Base64 cua anh neu khong upload truc tiep file',
+          },
+          includeCroppedFace: {
+            type: 'boolean',
+            description:
+              'Tuy chon tra ve anh crop Base64 de debug tren Postman',
+            example: false,
+          },
+        },
+      },
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Ket qua kiem tra so khop khuon mat chi tiet',
+      schema: {
+        example: {
+          statusCode: 200,
+          message: 'Xac thuc khop voi cu dan Nguyen Van A - O tu so 3',
+          data: {
+            isMatch: true,
+            isReal: true,
+            matchScore: 0.842,
+            livenessScore: 0.978,
+            threshold: 0.48,
+            faceDetection: {
+              detected: true,
+              confidence: 0.988,
+              box: {
+                x1: 0.28,
+                y1: 0.15,
+                x2: 0.65,
+                y2: 0.62,
+              },
+              cropApplied: true,
+            },
+            matchedResident: {
+              userId: '6745a1b...',
+              name: 'Nguyen Van A',
+              phone: '0987654321',
+              apartment: 'P.1204',
+            },
+            matchedPackage: {
+              packageId: '6745c2d...',
+              trackingNumber: 'SPX12345678',
+              boxNumber: 3,
+              status: 'WAITING_FOR_PICKUP',
+            },
+            candidateCount: 5,
+            message: 'Xac thuc khop voi cu dan Nguyen Van A - O tu so 3',
+            inferenceTimeMs: 138,
+            dryRun: true,
+          },
+        },
+      },
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Thieu ma tram tu hoac anh khong hop le',
+    }),
+    ApiResponse({
+      status: 404,
+      description: 'Tram tu khong ton tai trong he thong',
+    }),
+  );
+}

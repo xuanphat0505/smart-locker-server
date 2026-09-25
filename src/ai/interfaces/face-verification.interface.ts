@@ -27,3 +27,59 @@ export interface ProcessEnrollmentResult {
   avatarUrl?: string;
   enrolledPosesCount: number;
 }
+
+// Định nghĩa điểm tọa độ mốc đặc trưng trên khuôn mặt
+export interface LandmarkPoint {
+  x: number;
+  y: number;
+}
+
+// Định nghĩa 5 điểm mốc chuẩn của khuôn mặt do YuNet phát hiện
+export interface FacialLandmarks {
+  rightEye: LandmarkPoint;
+  leftEye: LandmarkPoint;
+  noseTip: LandmarkPoint;
+  rightMouth: LandmarkPoint;
+  leftMouth: LandmarkPoint;
+}
+
+// Định nghĩa dữ liệu vị trí khuôn mặt do YuNet phát hiện
+export interface FaceDetectionMetadata {
+  detected: boolean;
+  confidence?: number;
+  box?: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  };
+  landmarks?: FacialLandmarks;
+  cropApplied: boolean;
+}
+
+// Định nghĩa kết quả kiểm tra so khớp khuôn mặt độc lập không có tác dụng phụ mở tủ
+export interface CheckFaceMatchResult {
+  isMatch: boolean;
+  isReal: boolean;
+  livenessScore: number;
+  matchScore: number;
+  threshold: number;
+  faceDetection?: FaceDetectionMetadata;
+  croppedFaceBase64?: string;
+  matchedResident?: {
+    userId: string;
+    name: string;
+    phone: string;
+    apartment?: string;
+  };
+  matchedPackage?: {
+    packageId: string;
+    trackingNumber: string;
+    boxNumber: number;
+    status: string;
+  };
+  candidateCount: number;
+  message?: string;
+  inferenceTimeMs: number;
+  dryRun: boolean;
+}

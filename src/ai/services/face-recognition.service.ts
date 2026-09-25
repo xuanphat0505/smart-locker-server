@@ -1,8 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as ort from 'onnxruntime-node';
 import sharp from 'sharp';
+
+import { FaceDetectorService } from './face-detector.service';
 
 // Hang so kich thuoc anh dau vao va chieu khong gian vector dac trung
 const FACE_INPUT_SIZE = 112;
@@ -13,9 +15,15 @@ export class FaceRecognitionService implements OnModuleInit {
   private readonly logger = new Logger(FaceRecognitionService.name);
   private session: ort.InferenceSession | null = null;
   private isModelLoaded = false;
+  private faceDetectorService: FaceDetectorService;
+
+  constructor(@Optional() faceDetectorService?: FaceDetectorService) {
+    this.faceDetectorService = faceDetectorService || new FaceDetectorService();
+  }
 
   // Khoi tao va nap mo hinh MobileFaceNet ONNX khi module khoi dong
   async onModuleInit(): Promise<void> {
+    await this.faceDetectorService.loadModel();
     await this.loadModel();
   }
 
@@ -94,7 +102,10 @@ export class FaceRecognitionService implements OnModuleInit {
       }
     }
 
-    const inputTensor = await this.preprocessFaceToTensor(imageBuffer);
+    // Tu dong phat hien va can chinh chuan hoa khuon mat theo landmarks truoc khi dua vao ArcFace
+    const croppedFaceBuffer =
+      await this.faceDetectorService.cropFace(imageBuffer);
+    const inputTensor = await this.preprocessFaceToTensor(croppedFaceBuffer);
     const inputName = this.session.inputNames[0];
 
     const feeds: Record<string, ort.Tensor> = {};
@@ -111,7 +122,7 @@ export class FaceRecognitionService implements OnModuleInit {
     }
     const norm = Math.sqrt(sumSquares) || 1e-10;
 
-    const normalizedVector: number[] = new Array(EMBEDDING_DIMENSION);
+    const normalizedVector: number[] = new Array<number>(EMBEDDING_DIMENSION);
     for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
       normalizedVector[i] = Number((rawEmbedding[i] / norm).toFixed(6));
     }
