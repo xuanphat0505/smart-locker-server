@@ -95,7 +95,7 @@ export function ApiEnrollFaceDoc() {
     ApiOperation({
       summary: 'Dang ky / Cap nhat nhan dien Face ID cua cu dan',
       description:
-        'Kiem tra liveness, trich xuat vector 512 chieu luu vao user.faceAuth va dong bo anh len Cloudinary',
+        'Kiem tra liveness, trich xuat vector dac trung 512 chieu luu vao user.faceAuth de mo khoa tu thong minh (khong luu tru anh thô len Cloudinary)',
     }),
     ApiConsumes('multipart/form-data', 'application/json'),
     ApiBody({
@@ -130,8 +130,8 @@ export function ApiEnrollFaceDoc() {
           data: {
             success: true,
             livenessScore: 0.952,
-            avatarUrl: 'https://res.cloudinary.com/.../avatar.jpg',
             enrolledAt: '2026-09-24T12:00:00.000Z',
+            enrolledPosesCount: 1,
           },
         },
       },

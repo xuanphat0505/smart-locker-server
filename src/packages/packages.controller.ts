@@ -4,6 +4,7 @@ import {
   Post,
   Param,
   Body,
+  Headers,
   UseGuards,
   Request,
   UseInterceptors,
@@ -97,8 +98,13 @@ export class PackagesController {
   async pickupWithFace(
     @UploadedFile() file?: Express.Multer.File,
     @Body() dto?: PickupFaceDto,
+    @Headers('x-locker-code') lockerCodeHeader?: string,
   ) {
-    return this.packagesService.pickupWithFace(dto, file);
+    const finalDto: PickupFaceDto = {
+      ...(dto || { lockerCode: '' }),
+      lockerCode: dto?.lockerCode || lockerCodeHeader || '',
+    };
+    return this.packagesService.pickupWithFace(finalDto, file);
   }
 
   // Cư dân xem danh sách toàn bộ các bưu kiện của chính mình

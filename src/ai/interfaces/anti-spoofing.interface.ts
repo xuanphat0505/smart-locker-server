@@ -7,7 +7,13 @@ export interface LivenessCheckResult {
   verdict: 'REAL' | 'SPOOF';
 }
 
-// Tuy chon cau hinh nguong nhan dien liveness
+// Tuy chon cau hinh nguong nhan dien liveness va toa do mat
 export interface AntiSpoofingOptions {
   threshold?: number;
+  faceBox?: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  } | null;
 }
