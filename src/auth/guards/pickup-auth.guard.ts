@@ -25,7 +25,10 @@ export class PickupAuthGuard implements CanActivate {
     const authHeader = request.headers['authorization'];
 
     if (apiKey) {
-      const lockerCode = request.body?.lockerCode;
+      const lockerCode =
+        request.headers['x-locker-code'] ||
+        request.query?.lockerCode ||
+        request.body?.lockerCode;
       if (!lockerCode) {
         throw new BadRequestException(
           'Yêu cầu từ thiết bị cần có mã trạm tủ lockerCode',

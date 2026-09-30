@@ -15,7 +15,6 @@ export interface VerifyFaceHardwareResult {
 export interface EnrollFaceResult {
   success: boolean;
   livenessScore: number;
-  avatarUrl?: string;
   enrolledAt: Date;
   enrolledPosesCount?: number;
 }
@@ -24,7 +23,6 @@ export interface EnrollFaceResult {
 export interface ProcessEnrollmentResult {
   embedding: number[];
   livenessScore: number;
-  avatarUrl?: string;
   enrolledPosesCount: number;
 }
 

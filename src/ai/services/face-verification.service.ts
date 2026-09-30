@@ -6,6 +6,8 @@ import {
   UnauthorizedException,
   Logger,
 } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Package } from '../../packages/schemas/package.schema';
@@ -95,8 +97,18 @@ export class FaceVerificationService {
     }
 
     const primaryBuffer = imageBuffers[0];
-    const livenessResult =
-      await this.antiSpoofingService.checkLiveness(primaryBuffer);
+    const detectedFace =
+      await this.faceDetectorService.detectFace(primaryBuffer);
+    if (!detectedFace) {
+      throw new BadRequestException(
+        'Không tìm thấy khuôn mặt rõ nét trong ảnh. Vui lòng chụp lại ảnh khuôn mặt chính diện',
+      );
+    }
+
+    const livenessResult = await this.antiSpoofingService.checkLiveness(
+      primaryBuffer,
+      { faceBox: detectedFace },
+    );
     if (!livenessResult.isReal) {
       throw new BadRequestException(
         `Ảnh khuôn mặt không đạt chuẩn chân thực (Điểm thật: ${(livenessResult.livenessScore * 100).toFixed(1)}%). Vui lòng chụp lại ảnh người thật rõ nét`,
@@ -141,7 +153,6 @@ export class FaceVerificationService {
     return {
       success: true,
       livenessScore: processed.livenessScore,
-      avatarUrl: user.avatar,
       enrolledAt,
       enrolledPosesCount: 1,
     };
@@ -154,12 +165,55 @@ export class FaceVerificationService {
   ): Promise<VerifyFaceHardwareResult> {
     const startTime = Date.now();
 
-    // Buoc 1: Kiem tra chong gia mao bang mo hinh Anti-Spoofing
-    const livenessResult =
-      await this.antiSpoofingService.checkLiveness(imageBuffer);
+    // Lưu ảnh nhận được từ camera trạm tủ phục vụ kiểm tra và đối soát chất lượng ảnh
+    try {
+      const debugDir = path.join(process.cwd(), 'uploads/debug');
+      if (!fs.existsSync(debugDir)) {
+        fs.mkdirSync(debugDir, { recursive: true });
+      }
+      const latestCapturePath = path.join(debugDir, 'latest_cam_capture.jpg');
+      fs.writeFileSync(latestCapturePath, imageBuffer);
+
+      const historyDir = path.join(debugDir, 'captures');
+      if (!fs.existsSync(historyDir)) {
+        fs.mkdirSync(historyDir, { recursive: true });
+      }
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.writeFileSync(
+        path.join(historyDir, `capture_${lockerCode}_${timestamp}.jpg`),
+        imageBuffer,
+      );
+
+      this.logger.log(
+        `[CAMERA_IN] Đã nhận ảnh từ trạm ${lockerCode} (${imageBuffer.length} bytes) -> Đã lưu tại: ${latestCapturePath}`,
+      );
+    } catch (saveErr) {
+      this.logger.warn(`Không thể lưu ảnh debug camera: ${saveErr}`);
+    }
+
+    // Buoc 1: Phat hien khuon mat bang YuNet va kiem tra chong gia mao MiniFASNet
+    const detectedFace = await this.faceDetectorService.detectFace(imageBuffer);
+    if (!detectedFace) {
+      this.logger.warn(
+        `Tu choi xac thuc tai tram ${lockerCode}: Khong tim thay khuon mat trong anh camera`,
+      );
+      throw new BadRequestException(
+        'Khong phat hien khuon mat trong anh chup. Vui long dung truoc camera',
+      );
+    }
+
+    const livenessResult = await this.antiSpoofingService.checkLiveness(
+      imageBuffer,
+      { faceBox: detectedFace },
+    );
+
+    this.logger.log(
+      `[ANTI_SPOOFING] Trạm ${lockerCode} -> Điểm Liveness: ${(livenessResult.livenessScore * 100).toFixed(1)}% | Spoof: ${(livenessResult.spoofScore * 100).toFixed(1)}% | Kết luận: ${livenessResult.verdict} (Inference: ${livenessResult.inferenceTimeMs}ms)`,
+    );
+
     if (!livenessResult.isReal) {
       this.logger.warn(
-        `Tu choi xac thuc tai tram ${lockerCode}: Phat hien mat gia (Liveness: ${livenessResult.livenessScore})`,
+        `Tu choi xac thuc tai tram ${lockerCode}: Phat hien mat gia hoac khong ro net (Liveness: ${(livenessResult.livenessScore * 100).toFixed(1)}%)`,
       );
       throw new ForbiddenException(
         'Phat hien khuon mat khong hop le hoac gia mao man hinh/anh in',
@@ -341,8 +395,10 @@ export class FaceVerificationService {
     }
 
     // Bước 2: Kiểm tra tính chân thực khuôn mặt bằng mô hình Anti-Spoofing
-    const livenessResult =
-      await this.antiSpoofingService.checkLiveness(imageBuffer);
+    const livenessResult = await this.antiSpoofingService.checkLiveness(
+      imageBuffer,
+      { faceBox: detectedFace },
+    );
 
     if (!livenessResult.isReal) {
       return {

@@ -211,7 +211,6 @@ export class AuthService {
       embedding: [] as number[],
       enrolledAt: null as unknown as Date,
     };
-    let avatarUrl: string | undefined;
 
     if (imageBuffers.length > 0) {
       const processed =
@@ -224,7 +223,6 @@ export class AuthService {
         embedding: processed.embedding,
         enrolledAt: new Date(),
       };
-      avatarUrl = processed.avatarUrl;
     }
 
     const newUser = await this.usersService.create({
@@ -236,7 +234,6 @@ export class AuthService {
       buildingId: new Types.ObjectId(dto.buildingId),
       apartment: dto.apartment.trim(),
       approvalStatus: ApprovalStatus.PENDING,
-      avatar: avatarUrl || undefined,
       faceAuth: faceAuthData,
     });
 
