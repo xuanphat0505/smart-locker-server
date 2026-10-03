@@ -108,13 +108,75 @@ export function ApiCreateBuildingDoc() {
   );
 }
 
-// Tài liệu Swagger cho endpoint Quản trị viên cấp cao System Admin cập nhật Tòa Nhà
+// Tài liệu Swagger cho endpoint Ban Quản Lý xem thông tin Tòa Nhà của mình
+export function ApiGetMyBuildingDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Ban Quản Lý xem thông tin Tòa Nhà của mình',
+      description:
+        'Dành cho Quản trị viên Tòa Nhà (BUILDING_ADMIN) xem thông tin chi tiết, STK ngân hàng thụ hưởng và biểu phí hiện hành',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Lấy thông tin tòa nhà thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Tài khoản chưa được liên kết với Tòa nhà nào',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Không có quyền truy cập (Chỉ dành cho Building Admin)',
+    }),
+    ApiResponse({
+      status: 404,
+      description: 'Không tìm thấy thông tin tòa nhà',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint Ban Quản Lý cập nhật thông tin và biểu phí Tòa Nhà của mình
+export function ApiUpdateMyBuildingDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Ban Quản Lý cập nhật cấu hình Tòa Nhà',
+      description:
+        'Dành cho Quản trị viên Tòa Nhà (BUILDING_ADMIN) cập nhật hotline, email, STK ngân hàng thụ hưởng VietQR và biểu phí 4 chặng',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Cập nhật cấu hình tòa nhà thành công',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Dữ liệu đầu vào hoặc biểu phí không hợp lệ',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Không có quyền truy cập (Chỉ dành cho Building Admin)',
+    }),
+    ApiResponse({
+      status: 404,
+      description: 'Không tìm thấy tòa nhà để cập nhật',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint cập nhật Tòa Nhà theo ID
 export function ApiUpdateBuildingDoc() {
   return applyDecorators(
     ApiOperation({
-      summary: 'Cập nhật thông tin Tòa Nhà',
+      summary: 'Cập nhật thông tin Tòa Nhà theo mã ID',
       description:
-        'Dành riêng cho Quản trị viên cấp cao System Admin cập nhật thông tin địa chỉ, số tầng, hotline hoặc trạng thái tòa nhà',
+        'System Admin có quyền cập nhật mọi tòa nhà; Building Admin chỉ được cập nhật tòa nhà do mình quản lý',
     }),
     ApiResponse({
       status: 200,
@@ -130,7 +192,8 @@ export function ApiUpdateBuildingDoc() {
     }),
     ApiResponse({
       status: 403,
-      description: 'Không có quyền truy cập (Chỉ dành cho System Admin)',
+      description:
+        'Không có quyền truy cập hoặc cố gắng sửa đổi tòa nhà không thuộc quyền quản lý',
     }),
     ApiResponse({
       status: 404,

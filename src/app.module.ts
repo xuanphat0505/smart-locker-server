@@ -17,6 +17,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { UploadModule } from './upload/upload.module';
 import { MqttModule } from './mqtt/mqtt.module';
 import { AiModule } from './ai/ai.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { AiModule } from './ai/ai.module';
     BuildingsModule,
     LockersModule,
     PackagesModule,
+    PaymentsModule,
     MailModule,
     NotificationsModule,
     UploadModule,

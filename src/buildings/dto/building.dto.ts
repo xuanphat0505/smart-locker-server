@@ -8,6 +8,7 @@ import {
   IsString,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BuildingStatus } from '../enums/building-status.enum';
@@ -92,14 +93,157 @@ export class CreateBuildingDto {
   @Min(-180)
   @Max(180)
   longitude?: number;
+  @ApiPropertyOptional({
+    example: 'bql.s101@smartlocker.vn',
+    description: 'Email chính thức của Ban Quản Lý tòa nhà',
+  })
+  @IsOptional()
+  @IsString({ message: 'Email quản lý phải là chuỗi ký tự' })
+  managementEmail?: string;
+}
+
+// DTO thông tin tài khoản ngân hàng thụ hưởng của Ban Quản Lý
+export class BankAccountDto {
+  @ApiPropertyOptional({
+    example: '970422',
+    description: 'Mã BIN ngân hàng thụ hưởng chuẩn NAPAS (vd: 970422 - MBBank)',
+  })
+  @IsOptional()
+  @IsString({ message: 'Mã BIN ngân hàng phải là chuỗi ký tự' })
+  bankBin?: string;
+
+  @ApiPropertyOptional({
+    example: 'MBBank',
+    description: 'Tên ngân hàng thụ hưởng',
+  })
+  @IsOptional()
+  @IsString({ message: 'Tên ngân hàng phải là chuỗi ký tự' })
+  bankName?: string;
+
+  @ApiPropertyOptional({
+    example: '0123456789',
+    description: 'Số tài khoản ngân hàng thụ hưởng của Ban Quản Lý',
+  })
+  @IsOptional()
+  @IsString({ message: 'Số tài khoản phải là chuỗi ký tự' })
+  accountNumber?: string;
+
+  @ApiPropertyOptional({
+    example: 'BQL CHUNG CU TECCO TOWER',
+    description: 'Tên chủ tài khoản thụ hưởng',
+  })
+  @IsOptional()
+  @IsString({ message: 'Tên chủ tài khoản phải là chuỗi ký tự' })
+  accountName?: string;
+}
+
+// DTO cấu hình biểu phí 4 chặng của tòa nhà
+export class PricingPolicyDto {
+  @ApiPropertyOptional({
+    example: 30000,
+    description: 'Mức phí gói tháng VIP (VNĐ / 30 ngày)',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Phí gói tháng phải là số' })
+  @Min(0, { message: 'Phí gói tháng không được âm' })
+  monthlySubscriptionFee?: number;
+
+  @ApiPropertyOptional({
+    example: 5000,
+    description: 'Phí lượt nhận hàng lẻ dành cho khách chưa mua gói tháng (VNĐ / lượt)',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Phí lượt lẻ phải là số' })
+  @Min(0, { message: 'Phí lượt lẻ không được âm' })
+  perUseFee?: number;
+
+  @ApiPropertyOptional({
+    example: 12,
+    description: 'Mốc thời lượng T1 tính từ thời điểm gửi hàng (giờ)',
+    minimum: 1,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Mốc T1 phải là số nguyên giờ' })
+  @Min(1, { message: 'Mốc T1 tối thiểu 1 giờ' })
+  t1Hours?: number;
+
+  @ApiPropertyOptional({
+    example: 24,
+    description: 'Mốc thời lượng T2 tính từ thời điểm gửi hàng (giờ)',
+    minimum: 1,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Mốc T2 phải là số nguyên giờ' })
+  @Min(1, { message: 'Mốc T2 tối thiểu 1 giờ' })
+  t2Hours?: number;
+
+  @ApiPropertyOptional({
+    example: 48,
+    description: 'Mốc thời lượng T3 tính từ thời điểm gửi hàng trước khi thu hồi (giờ)',
+    minimum: 1,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Mốc T3 phải là số nguyên giờ' })
+  @Min(1, { message: 'Mốc T3 tối thiểu 1 giờ' })
+  t3Hours?: number;
+
+  @ApiPropertyOptional({
+    example: 10000,
+    description: 'Phụ thu chặng T1 đến T2 (VNĐ)',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Phụ thu X1 phải là số' })
+  @Min(0, { message: 'Phụ thu X1 không được âm' })
+  feeX1?: number;
+
+  @ApiPropertyOptional({
+    example: 15000,
+    description: 'Phụ thu chặng T2 đến T3 (VNĐ)',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Phụ thu X2 phải là số' })
+  @Min(0, { message: 'Phụ thu X2 không được âm' })
+  feeX2?: number;
+
+  @ApiPropertyOptional({
+    example: 25000,
+    description: 'Mức trần phụ thu quá hạn tối đa (VNĐ)',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Mức trần phụ thu phải là số' })
+  @Min(0, { message: 'Mức trần phụ thu không được âm' })
+  maxOverdueFeeCap?: number;
 }
 
 // DTO cập nhật thông tin Tòa Nhà
 export class UpdateBuildingDto extends PartialType(CreateBuildingDto) {
   @ApiPropertyOptional({
+    type: () => BankAccountDto,
+    description: 'Thông tin tài khoản ngân hàng thụ hưởng của Ban Quản Lý',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BankAccountDto)
+  bankAccount?: BankAccountDto;
+
+  @ApiPropertyOptional({
+    type: () => PricingPolicyDto,
+    description: 'Cấu hình biểu phí 4 chặng của tòa nhà',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PricingPolicyDto)
+  pricingPolicy?: PricingPolicyDto;
+
+  @ApiPropertyOptional({
     enum: BuildingStatus,
     example: BuildingStatus.ACTIVE,
-    description: 'Trạng thái hoạt động của Tòa Nhà',
+    description: 'Trạng thái hoạt động của Tòa Nhà (Chỉ System Admin có quyền sửa)',
   })
   @IsOptional()
   @IsEnum(BuildingStatus, { message: 'Trạng thái tòa nhà không hợp lệ' })

@@ -176,6 +176,12 @@ export class UserProfileResponseDto {
   @ApiProperty({ example: false, required: false })
   twoFactorEnabled?: boolean;
 
+  @ApiProperty({ example: 'ACTIVE', required: false })
+  subscriptionStatus?: string;
+
+  @ApiProperty({ example: '2026-11-03T12:00:00.000Z', required: false })
+  subscriptionExpiresAt?: Date;
+
   @ApiProperty({
     type: Object,
     example: { enabled: true, enrolledAt: '2026-09-24T12:00:00.000Z' },

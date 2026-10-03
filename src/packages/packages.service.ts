@@ -30,6 +30,8 @@ import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MqttService } from '../mqtt/mqtt.service';
 import { FaceVerificationService } from '../ai/services/face-verification.service';
+import { PaymentsService } from '../payments/payments.service';
+import { PaymentType } from '../payments/enums/payment.enums';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
 
 @Injectable()
@@ -48,6 +50,7 @@ export class PackagesService {
     private readonly notificationsService: NotificationsService,
     private readonly mqttService: MqttService,
     private readonly faceVerificationService: FaceVerificationService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   // Tài xế giao bưu kiện vào ngăn tủ và sinh mã OTP mở tủ cho cư dân
@@ -564,7 +567,9 @@ export class PackagesService {
     const pkg = await this.packageModel.findOne({
       lockerId: locker._id,
       pinCode: dto.pinCode.trim(),
-      status: PackageStatus.WAITING_FOR_PICKUP,
+      status: {
+        $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
+      },
     });
 
     if (!pkg) {
@@ -577,6 +582,30 @@ export class PackagesService {
       throw new BadRequestException(
         'Ngăn tủ này đang bị tạm khóa do nhập sai nhiều lần. Vui lòng thử lại sau',
       );
+    }
+
+    // Kiểm tra phí dịch vụ và tính hợp lệ của thời hạn nhận hàng
+    const feeInfo = await this.paymentsService.checkFee(String(pkg._id));
+    if (feeInfo.feeDue > 0) {
+      const intent = await this.paymentsService.createPaymentIntent({
+        packageId: String(pkg._id),
+        paymentType: PaymentType.OVERDUE_PICKUP,
+      });
+
+      return {
+        requiresPayment: true,
+        message: feeInfo.isOverdue
+          ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng quét mã VietQR trên màn hình để nộp phí mở tủ.'
+          : 'Vui lòng quét mã VietQR trên màn hình để thanh toán phí lượt nhận hàng.',
+        packageId: String(pkg._id),
+        boxNumber: pkg.boxNumber,
+        feeAmount: intent.amount,
+        orderCode: intent.orderCode,
+        qrPayload: intent.qrPayload,
+        qrCodeUrl: intent.qrCodeUrl,
+        recipientAccount: intent.recipientAccount,
+        expiresAt: intent.expiresAt,
+      };
     }
 
     const box = await this.boxModel.findById(pkg.boxId);
@@ -751,6 +780,11 @@ export class PackagesService {
       {
         status: PackageStatus.WAITING_FOR_PICKUP,
         expiredAt: { $lt: now },
+        $or: [
+          { paidUntil: { $exists: false } },
+          { paidUntil: null },
+          { paidUntil: { $lte: now } },
+        ],
       },
       {
         $set: { status: PackageStatus.OVERDUE },
