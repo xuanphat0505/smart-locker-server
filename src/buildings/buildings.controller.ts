@@ -8,6 +8,8 @@ import {
   Body,
   Query,
   UseGuards,
+  Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { BuildingsService } from './buildings.service';
@@ -22,6 +24,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
+import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import {
   ApiFindAllBuildingsDoc,
   ApiFindNearbyBuildingsDoc,
@@ -29,6 +32,8 @@ import {
   ApiCreateBuildingDoc,
   ApiUpdateBuildingDoc,
   ApiRemoveBuildingDoc,
+  ApiGetMyBuildingDoc,
+  ApiUpdateMyBuildingDoc,
 } from './swagger/building.swagger';
 
 @ApiTags('Buildings')
@@ -50,6 +55,31 @@ export class BuildingsController {
     return this.buildingsService.findNearby(query.lat, query.lng, query.radius);
   }
 
+  // Ban Quản Lý xem thông tin chi tiết Tòa Nhà của mình
+  @Get('my-building')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.BUILDING_ADMIN)
+  @ApiBearerAuth('JWT-auth')
+  @ApiGetMyBuildingDoc()
+  async findMyBuilding(
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<Building> {
+    return this.buildingsService.findMyBuilding(req.user.buildingId);
+  }
+
+  // Ban Quản Lý cập nhật thông tin và biểu phí Tòa Nhà của mình
+  @Patch('my-building')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.BUILDING_ADMIN)
+  @ApiBearerAuth('JWT-auth')
+  @ApiUpdateMyBuildingDoc()
+  async updateMyBuilding(
+    @Request() req: { user: AuthenticatedUser },
+    @Body() dto: UpdateBuildingDto,
+  ): Promise<Building> {
+    return this.buildingsService.updateMyBuilding(req.user.buildingId, dto);
+  }
+
   // Lấy thông tin chi tiết một Tòa Nhà theo mã id
   @Get(':id')
   @ApiFindOneBuildingDoc()
@@ -67,16 +97,31 @@ export class BuildingsController {
     return this.buildingsService.create(dto);
   }
 
-  // Cập nhật thông tin Tòa Nhà (Dành riêng cho Quản trị viên cấp cao System Admin)
+  // Cập nhật thông tin Tòa Nhà theo mã id
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.SYSTEM_ADMIN)
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
   @ApiBearerAuth('JWT-auth')
   @ApiUpdateBuildingDoc()
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateBuildingDto,
+    @Request() req: { user: AuthenticatedUser },
   ): Promise<Building> {
+    // Kiểm tra phạm vi quyền hạn của Ban Quản Lý
+    if (
+      req.user.role === Role.BUILDING_ADMIN &&
+      req.user.buildingId?.toString() !== id
+    ) {
+      throw new ForbiddenException(
+        'Bạn chỉ có quyền cập nhật thông tin tòa nhà thuộc phạm vi quản lý của mình',
+      );
+    }
+
+    if (req.user.role === Role.BUILDING_ADMIN) {
+      return this.buildingsService.updateMyBuilding(id, dto);
+    }
+
     return this.buildingsService.update(id, dto);
   }
 

@@ -17,6 +17,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { MqttModule } from '../mqtt/mqtt.module';
 import { AuthModule } from '../auth/auth.module';
 import { AiModule } from '../ai/ai.module';
+import { PaymentsModule } from '../payments/payments.module';
 import { PickupAuthGuard } from '../auth/guards/pickup-auth.guard';
 import { PackagesController } from './packages.controller';
 import { PackagesService } from './packages.service';
@@ -35,6 +36,7 @@ import { PackagesService } from './packages.service';
     NotificationsModule,
     MqttModule,
     AiModule,
+    PaymentsModule,
   ],
   controllers: [PackagesController],
   providers: [PackagesService, PickupAuthGuard],

@@ -95,17 +95,19 @@ export function ApiGetQrTokenDoc() {
 export function ApiPickupOtpDoc() {
   return applyDecorators(
     ApiOperation({
-      summary: 'Nhập mã OTP 6 số tại trạm tủ để nhận hàng',
+      summary: 'Nhập mã OTP 6 số tại trạm tủ để nhận hàng hoặc nộp phạt mở tủ',
       description:
-        'API công khai phục vụ màn hình cảm ứng hoặc bàn phím tại tủ, đổi trạng thái đơn thành PICKED_UP và giải phóng Box',
+        'API công khai phục vụ màn hình cảm ứng hoặc bàn phím tại tủ. Nếu đơn hợp lệ: phát lệnh mở tủ và giải phóng Box. Nếu đơn quá hạn chưa thanh toán: khởi tạo phiên VietQR và trả về requiresPayment: true kèm dữ liệu QR để ESP32 render lên màn hình LCD.',
     }),
     ApiResponse({
       status: 200,
-      description: 'Xác thực OTP thành công, lệnh mở cửa ngăn tủ đã phát',
+      description:
+        'Xác thực OTP thành công (cửa ngăn tủ mở) hoặc yêu cầu nộp phí quá hạn (trả về dữ liệu VietQR)',
     }),
     ApiResponse({
       status: 400,
-      description: 'Mã OTP không đúng hoặc đơn hàng đã được lấy trước đó',
+      description:
+        'Mã OTP không đúng, đơn hàng đã được lấy trước đó, hoặc bị khóa tạm thời do nhập sai',
     }),
     ApiResponse({
       status: 404,

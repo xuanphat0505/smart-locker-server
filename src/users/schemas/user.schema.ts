@@ -118,6 +118,14 @@ export class User extends Document {
     embedding?: number[];
     enrolledAt?: Date;
   };
+
+  // Trạng thái thuê bao gói dịch vụ tháng của cư dân
+  @Prop({ default: 'INACTIVE', enum: ['ACTIVE', 'INACTIVE'] })
+  subscriptionStatus: string;
+
+  // Thời điểm hết hạn gói dịch vụ tháng
+  @Prop({ required: false })
+  subscriptionExpiresAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
@@ -130,3 +138,9 @@ UserSchema.index({ 'twoFactorAuth.enabled': 1 }, { sparse: true });
 
 // Chi muc tim kiem nhanh cu dan da dang ky Face ID
 UserSchema.index({ 'faceAuth.enabled': 1 }, { sparse: true });
+
+// Chỉ mục tối ưu hóa kiểm tra quyền lợi gói tháng và quét tài khoản hết hạn
+UserSchema.index(
+  { subscriptionStatus: 1, subscriptionExpiresAt: 1 },
+  { sparse: true },
+);

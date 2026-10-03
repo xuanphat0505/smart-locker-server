@@ -132,6 +132,14 @@ export class Package extends Document {
   @Prop({ required: true })
   expiredAt: Date;
 
+  // Tổng số tiền cư dân đã nộp phạt hoặc gia hạn lưu kho (VNĐ)
+  @Prop({ default: 0 })
+  totalFeePaid: number;
+
+  // Thời hạn nhận hàng đã được bảo chứng bằng thanh toán gia hạn
+  @Prop({ required: false })
+  paidUntil?: Date;
+
   // Ghi chú đính kèm của đơn hàng
   @Prop({ required: false, trim: true })
   note?: string;
@@ -147,3 +155,6 @@ PackageSchema.index({ residentId: 1, status: 1 });
 
 // Đánh chỉ mục phục vụ tác vụ nền tự động quét các đơn quá hạn sau 48 giờ
 PackageSchema.index({ status: 1, expiredAt: 1 });
+
+// Đánh chỉ mục tối ưu tác vụ nền kiểm tra đơn hàng quá hạn mà chưa nộp phí bảo chứng
+PackageSchema.index({ status: 1, paidUntil: 1, expiredAt: 1 });

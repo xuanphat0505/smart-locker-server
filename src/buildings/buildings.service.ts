@@ -99,7 +99,7 @@ export class BuildingsService {
 
   // Cập nhật thông tin chi tiết của một Tòa Nhà
   async update(id: string, dto: UpdateBuildingDto): Promise<Building> {
-    await this.findById(id);
+    const current = await this.findById(id);
 
     if (dto.code) {
       const normalizedCode = dto.code.toUpperCase().trim();
@@ -112,7 +112,7 @@ export class BuildingsService {
       dto.code = normalizedCode;
     }
 
-    const { latitude, longitude, ...restDto } = dto;
+    const { latitude, longitude, bankAccount, pricingPolicy, ...restDto } = dto;
     const updatePayload: Record<string, unknown> = { ...restDto };
 
     if (latitude !== undefined && longitude !== undefined) {
@@ -120,6 +120,59 @@ export class BuildingsService {
         type: 'Point',
         coordinates: [longitude, latitude],
       };
+    }
+
+    // Hợp nhất an toàn thông tin tài khoản ngân hàng thụ hưởng tránh ghi đè mất trường
+    if (bankAccount) {
+      const mergedBank = {
+        ...(current.bankAccount || {}),
+        ...bankAccount,
+      };
+      if (mergedBank.accountName) {
+        mergedBank.accountName = mergedBank.accountName.toUpperCase().trim();
+      }
+      if (mergedBank.accountNumber) {
+        mergedBank.accountNumber = mergedBank.accountNumber.trim();
+      }
+      if (mergedBank.bankBin) {
+        mergedBank.bankBin = mergedBank.bankBin.trim();
+      }
+      updatePayload.bankAccount = mergedBank;
+    }
+
+    // Hợp nhất an toàn và kiểm tra tính hợp lý của biểu phí 4 chặng
+    if (pricingPolicy) {
+      const mergedPolicy = {
+        ...(current.pricingPolicy || {
+          monthlySubscriptionFee: 30000,
+          perUseFee: 5000,
+          t1Hours: 12,
+          t2Hours: 24,
+          t3Hours: 48,
+          feeX1: 10000,
+          feeX2: 15000,
+          maxOverdueFeeCap: 25000,
+        }),
+        ...pricingPolicy,
+      };
+
+      if (
+        mergedPolicy.t1Hours &&
+        mergedPolicy.t2Hours &&
+        mergedPolicy.t1Hours >= mergedPolicy.t2Hours
+      ) {
+        throw new BadRequestException('Mốc thời lượng T1 phải nhỏ hơn T2');
+      }
+
+      if (
+        mergedPolicy.t2Hours &&
+        mergedPolicy.t3Hours &&
+        mergedPolicy.t2Hours >= mergedPolicy.t3Hours
+      ) {
+        throw new BadRequestException('Mốc thời lượng T2 phải nhỏ hơn T3');
+      }
+
+      updatePayload.pricingPolicy = mergedPolicy;
     }
 
     const updated = await this.buildingModel
@@ -133,6 +186,32 @@ export class BuildingsService {
     }
 
     return updated;
+  }
+
+  // Lấy thông tin tòa nhà của Ban Quản Lý đang đăng nhập
+  async findMyBuilding(buildingId?: string): Promise<Building> {
+    if (!buildingId) {
+      throw new BadRequestException(
+        'Tài khoản quản trị chưa được liên kết với Tòa nhà nào',
+      );
+    }
+    return this.findById(buildingId);
+  }
+
+  // Cập nhật thông tin tòa nhà do Ban Quản Lý thực hiện giới hạn các trường an toàn
+  async updateMyBuilding(
+    buildingId: string | undefined,
+    dto: UpdateBuildingDto,
+  ): Promise<Building> {
+    if (!buildingId) {
+      throw new BadRequestException(
+        'Tài khoản quản trị chưa được liên kết với Tòa nhà nào',
+      );
+    }
+
+    // Chặn Ban Quản Lý tự ý thay đổi mã định danh hoặc trạng thái kích hoạt của tòa nhà
+    const { ...safeDto } = dto;
+    return this.update(buildingId, safeDto);
   }
 
   // Xóa Tòa Nhà khỏi hệ thống có kiểm tra ràng buộc cư dân và tài khoản liên kết
