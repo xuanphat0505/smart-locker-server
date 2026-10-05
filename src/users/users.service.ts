@@ -212,7 +212,7 @@ export class UsersService {
       buildingHotline: populatedBuilding?.hotline,
       buildingEmail: populatedBuilding?.managementEmail,
       twoFactorEnabled: user.twoFactorAuth?.enabled ?? false,
-      subscriptionStatus: user.subscriptionStatus,
+      subscriptionStatus: user.subscriptionStatus || 'INACTIVE',
       subscriptionExpiresAt: user.subscriptionExpiresAt,
       faceAuth: {
         enabled: user.faceAuth?.enabled ?? false,

@@ -15,6 +15,7 @@ export enum PaymentType {
 
 // Định nghĩa phương thức thanh toán
 export enum PaymentMethod {
+  SEPAY = 'SEPAY',
   VIETQR = 'VIETQR',
   SANDBOX = 'SANDBOX',
 }

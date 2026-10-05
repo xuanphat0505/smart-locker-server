@@ -49,22 +49,42 @@ export function ApiCreatePaymentIntentDoc() {
   );
 }
 
-// Tài liệu Swagger cho endpoint xác nhận thanh toán giả lập Sandbox
-export function ApiSandboxConfirmPaymentDoc() {
+// Tài liệu Swagger cho endpoint webhook tiếp nhận thông báo thanh toán SePay
+export function ApiSepayWebhookDoc() {
   return applyDecorators(
     ApiOperation({
-      summary: 'Xác nhận thanh toán thành công (Chế độ giả lập Sandbox)',
+      summary: 'Tiếp nhận webhook thanh toán tự động từ cổng SePay Gateway',
       description:
-        'Cập nhật giao dịch sang trạng thái PAID và gia hạn hạn nhận hàng của bưu kiện - chỉ xử lý nghiệp vụ tài chính',
+        'Xác thực Secret Token từ Header Authorization, bóc tách orderCode từ nội dung chuyển khoản, gạch nợ tự động và kích hoạt mở tủ Kiosk hoặc gia hạn đơn hàng',
     }),
     ApiResponse({
       status: 200,
-      description: 'Xác nhận thanh toán giả lập thành công',
+      description: 'Tiếp nhận và xử lý webhook thành công',
     }),
     ApiResponse({
-      status: 400,
+      status: 401,
+      description: 'Chữ ký xác thực webhook không hợp lệ',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint tra cứu trạng thái thanh toán phục vụ Client Auto-Polling
+export function ApiGetPaymentStatusDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary:
+        'Tra cứu trạng thái thanh toán phục vụ Auto-Polling từ Mobile App hoặc ESP32',
       description:
-        'Giao dịch không ở trạng thái chờ thanh toán hoặc đã hết hạn',
+        'Endpoint phản hồi nhanh và gọn nhẹ giúp Client định kỳ 2 giây kiểm tra trạng thái PAID để tự động đóng modal hoặc bung cửa tủ',
+    }),
+    ApiParam({
+      name: 'orderCode',
+      description: 'Mã số giao dịch thanh toán duy nhất',
+      example: 8491823912,
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Lấy trạng thái giao dịch thành công',
     }),
     ApiResponse({
       status: 404,
