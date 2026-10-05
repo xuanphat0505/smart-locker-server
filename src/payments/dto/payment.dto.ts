@@ -28,6 +28,13 @@ export class CreatePaymentIntentDto {
   @IsOptional()
   @IsEnum(PaymentType, { message: 'Mục đích thanh toán không hợp lệ' })
   paymentType?: PaymentType;
+
+  @ApiPropertyOptional({
+    default: false,
+    description: 'Đánh dấu phiên thanh toán được khởi tạo tại màn hình trạm tủ Kiosk ESP32',
+  })
+  @IsOptional()
+  isKiosk?: boolean;
 }
 
 // DTO xác nhận thanh toán giả lập dành cho môi trường phát triển và kiểm thử

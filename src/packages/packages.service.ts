@@ -590,20 +590,23 @@ export class PackagesService {
       const intent = await this.paymentsService.createPaymentIntent({
         packageId: String(pkg._id),
         paymentType: PaymentType.OVERDUE_PICKUP,
+        isKiosk: true,
       });
 
       return {
         requiresPayment: true,
         message: feeInfo.isOverdue
-          ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng quét mã VietQR trên màn hình để nộp phí mở tủ.'
-          : 'Vui lòng quét mã VietQR trên màn hình để thanh toán phí lượt nhận hàng.',
+          ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng quét mã QR trên màn hình để nộp phí mở tủ.'
+          : 'Vui lòng quét mã QR trên màn hình để thanh toán phí lượt nhận hàng.',
         packageId: String(pkg._id),
         boxNumber: pkg.boxNumber,
         feeAmount: intent.amount,
         orderCode: intent.orderCode,
+        paymentUrl: intent.paymentUrl,
         qrPayload: intent.qrPayload,
         qrCodeUrl: intent.qrCodeUrl,
         recipientAccount: intent.recipientAccount,
+        description: intent.description,
         expiresAt: intent.expiresAt,
       };
     }

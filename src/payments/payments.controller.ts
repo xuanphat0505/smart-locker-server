@@ -4,6 +4,7 @@ import {
   Post,
   Param,
   Body,
+  Headers,
   UseGuards,
   Request,
   ParseIntPipe,
@@ -14,6 +15,7 @@ import {
   CreatePaymentIntentDto,
   CreateSubscriptionIntentDto,
   SandboxConfirmPaymentDto,
+  SepayWebhookDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -24,7 +26,8 @@ import {
   ApiCheckFeeDoc,
   ApiCreatePaymentIntentDoc,
   ApiCreateSubscriptionIntentDoc,
-  ApiSandboxConfirmPaymentDoc,
+  ApiSepayWebhookDoc,
+  ApiGetPaymentStatusDoc,
   ApiGetMyPaymentsDoc,
   ApiGetPaymentByOrderCodeDoc,
   ApiKioskPickupDoc,
@@ -45,7 +48,7 @@ export class PaymentsController {
     return this.paymentsService.checkFee(packageId);
   }
 
-  // Khởi tạo phiên giao dịch thanh toán VietQR nộp phí quá hạn hoặc gia hạn lưu kho
+  // Khởi tạo phiên giao dịch thanh toán SePay nộp phí quá hạn hoặc gia hạn lưu kho
   @Post('create-intent')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
@@ -57,7 +60,7 @@ export class PaymentsController {
     return this.paymentsService.createPaymentIntent(dto, req.user.userId);
   }
 
-  // Khởi tạo phiên giao dịch thanh toán VietQR đăng ký hoặc gia hạn gói tháng VIP 30k
+  // Khởi tạo phiên giao dịch thanh toán SePay đăng ký hoặc gia hạn gói tháng VIP 30k
   @Post('subscription/create-intent')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
@@ -69,11 +72,22 @@ export class PaymentsController {
     return this.paymentsService.createSubscriptionIntent(dto, req.user.userId);
   }
 
-  // Xác nhận thanh toán thành công trong môi trường kiểm thử Sandbox - chỉ xử lý nghiệp vụ tài chính
-  @Post('sandbox-confirm')
-  @ApiSandboxConfirmPaymentDoc()
-  async sandboxConfirm(@Body() dto: SandboxConfirmPaymentDto) {
-    return this.paymentsService.confirmPayment(dto.orderCode, true);
+  // Tiếp nhận thông báo webhook từ cổng thanh toán SePay để tự động gạch nợ và xử lý
+  @Post('webhook/sepay')
+  @ApiSepayWebhookDoc()
+  async handleSepayWebhook(
+    @Body() dto: SepayWebhookDto,
+    @Headers('authorization') authHeader?: string,
+    @Headers('x-secret-key') xSecretKey?: string,
+  ) {
+    return this.paymentsService.handleSepayWebhook(dto, authHeader, xSecretKey);
+  }
+
+  // Tra cứu nhanh trạng thái giao dịch thanh toán phục vụ Client Auto-Polling
+  @Get('status/:orderCode')
+  @ApiGetPaymentStatusDoc()
+  async getPaymentStatus(@Param('orderCode', ParseIntPipe) orderCode: number) {
+    return this.paymentsService.getPaymentStatus(orderCode);
   }
 
   // ESP32 gọi sau khi polling xác nhận thanh toán thành công - kích hoạt mở chốt điện và hoàn tất nhận hàng

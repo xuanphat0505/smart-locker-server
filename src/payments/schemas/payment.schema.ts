@@ -62,6 +62,10 @@ export class Payment extends Document {
   @Prop({ required: false })
   boxNumber?: number;
 
+  // Đánh dấu giao dịch được khởi tạo tại màn hình trạm tủ Kiosk vật lý
+  @Prop({ required: false, default: false })
+  isKiosk?: boolean;
+
   // Mục đích thanh toán: Nộp phạt mở tủ hoặc Gia hạn lưu kho
   @Prop({
     type: String,
@@ -71,11 +75,11 @@ export class Payment extends Document {
   })
   paymentType: PaymentType;
 
-  // Phương thức thanh toán: VietQR thật hoặc Sandbox thử nghiệm
+  // Phương thức thanh toán: Cổng thanh toán SePay hoặc Sandbox thử nghiệm
   @Prop({
     type: String,
     enum: PaymentMethod,
-    default: PaymentMethod.VIETQR,
+    default: PaymentMethod.SEPAY,
     required: true,
   })
   paymentMethod: PaymentMethod;
@@ -91,17 +95,17 @@ export class Payment extends Document {
   // Bản sao bất biến thông tin tài khoản thụ hưởng của BQL tại thời điểm tạo giao dịch
   @Prop(
     raw({
-      bankBin: { type: String, required: true },
-      bankName: { type: String, required: true },
-      accountNumber: { type: String, required: true },
-      accountName: { type: String, required: true },
+      bankBin: { type: String, required: false },
+      bankName: { type: String, required: false },
+      accountNumber: { type: String, required: false },
+      accountName: { type: String, required: false },
     }),
   )
-  recipientAccount: {
-    bankBin: string;
-    bankName: string;
-    accountNumber: string;
-    accountName: string;
+  recipientAccount?: {
+    bankBin?: string;
+    bankName?: string;
+    accountNumber?: string;
+    accountName?: string;
   };
 
   // Trạng thái của phiên giao dịch
@@ -114,13 +118,25 @@ export class Payment extends Document {
   })
   status: PaymentStatus;
 
-  // Đường dẫn ảnh VietQR NAPAS dành cho ứng dụng di động và web
+  // Đường dẫn link thanh toán SePay Checkout
+  @Prop({ required: false })
+  paymentUrl?: string;
+
+  // Đường dẫn ảnh mã QR SePay / VietQR dành cho ứng dụng di động và web
   @Prop({ required: false })
   qrCodeUrl?: string;
 
   // Chuỗi văn bản EMVCo chuẩn NAPAS 247 để ESP32 tự vẽ mã QR lên màn hình LCD
   @Prop({ required: false })
   qrPayload?: string;
+
+  // Mã định danh giao dịch duy nhất do SePay cấp khi gạch nợ
+  @Prop({ required: false, index: true })
+  sepayTransactionId?: string;
+
+  // Mã tham chiếu giao dịch phía ngân hàng (FT reference code) do SePay gửi về
+  @Prop({ required: false })
+  referenceCode?: string;
 
   // Nội dung chuyển khoản ngân hàng
   @Prop({ required: false })
@@ -134,7 +150,7 @@ export class Payment extends Document {
   @Prop({ required: true })
   expiresAt: Date;
 
-  // Dữ liệu thô từ webhook ngân hàng phục vụ đối soát kiểm toán
+  // Dữ liệu thô từ webhook SePay phục vụ đối soát kiểm toán
   @Prop({ type: Object, select: false })
   rawTransactionData?: Record<string, any>;
 }
