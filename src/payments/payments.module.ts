@@ -10,7 +10,6 @@ import {
   LockerLogSchema,
 } from '../lockers/schemas/locker-log.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
-import { AuthModule } from '../auth/auth.module';
 import { MqttModule } from '../mqtt/mqtt.module';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
@@ -26,7 +25,6 @@ import { PaymentsService } from './payments.service';
       { name: LockerLog.name, schema: LockerLogSchema },
       { name: User.name, schema: UserSchema },
     ]),
-    AuthModule,
     MqttModule,
   ],
   controllers: [PaymentsController],

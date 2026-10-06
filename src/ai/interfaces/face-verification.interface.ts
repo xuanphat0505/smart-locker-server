@@ -9,6 +9,12 @@ export interface VerifyFaceHardwareResult {
   matchScore: number;
   livenessScore: number;
   inferenceTimeMs: number;
+  requiresPayment?: boolean;
+  feeAmount?: number;
+  orderCode?: number;
+  qrPayload?: string;
+  paymentUrl?: string;
+  message?: string;
 }
 
 // Định nghĩa kết quả trả về khi cư dân đăng ký Face ID thành công

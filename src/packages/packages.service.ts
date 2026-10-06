@@ -593,11 +593,28 @@ export class PackagesService {
         isKiosk: true,
       });
 
+      const paymentMessage = feeInfo.isOverdue
+        ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng quét mã QR trên màn hình để nộp phí mở tủ.'
+        : 'Vui lòng quét mã QR trên màn hình để thanh toán phí lượt nhận hàng.';
+
+      // Phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR thanh toán trên màn hình LCD
+      await this.mqttService.publishPaymentRequired(
+        locker.code,
+        pkg.boxNumber,
+        {
+          orderCode: intent.orderCode,
+          feeAmount: intent.amount,
+          qrPayload: intent.qrPayload,
+          paymentUrl: intent.paymentUrl,
+          residentName: pkg.receiverName,
+          message: paymentMessage,
+        },
+      );
+
       return {
         requiresPayment: true,
-        message: feeInfo.isOverdue
-          ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng quét mã QR trên màn hình để nộp phí mở tủ.'
-          : 'Vui lòng quét mã QR trên màn hình để thanh toán phí lượt nhận hàng.',
+        action: 'PAYMENT_REQUIRED',
+        message: paymentMessage,
         packageId: String(pkg._id),
         boxNumber: pkg.boxNumber,
         feeAmount: intent.amount,
@@ -675,13 +692,59 @@ export class PackagesService {
     const pkg = await this.packageModel.findOne({
       lockerId: locker._id,
       qrCodeToken: dto.qrCodeToken.trim(),
-      status: PackageStatus.WAITING_FOR_PICKUP,
+      status: {
+        $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
+      },
     });
 
     if (!pkg) {
       throw new BadRequestException(
         'Mã QR không hợp lệ hoặc bưu kiện đã được lấy trước đó',
       );
+    }
+
+    // Kiểm tra phí dịch vụ và tính hợp lệ của thời hạn nhận hàng
+    const feeInfo = await this.paymentsService.checkFee(String(pkg._id));
+    if (feeInfo.feeDue > 0) {
+      const intent = await this.paymentsService.createPaymentIntent({
+        packageId: String(pkg._id),
+        paymentType: PaymentType.OVERDUE_PICKUP,
+        isKiosk: true,
+      });
+
+      const paymentMessage = feeInfo.isOverdue
+        ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng quét mã QR trên màn hình để nộp phí mở tủ.'
+        : 'Vui lòng quét mã QR trên màn hình để thanh toán phí lượt nhận hàng.';
+
+      // Phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR thanh toán trên màn hình LCD
+      await this.mqttService.publishPaymentRequired(
+        locker.code,
+        pkg.boxNumber,
+        {
+          orderCode: intent.orderCode,
+          feeAmount: intent.amount,
+          qrPayload: intent.qrPayload,
+          paymentUrl: intent.paymentUrl,
+          residentName: pkg.receiverName,
+          message: paymentMessage,
+        },
+      );
+
+      return {
+        requiresPayment: true,
+        action: 'PAYMENT_REQUIRED',
+        message: paymentMessage,
+        packageId: String(pkg._id),
+        boxNumber: pkg.boxNumber,
+        feeAmount: intent.amount,
+        orderCode: intent.orderCode,
+        paymentUrl: intent.paymentUrl,
+        qrPayload: intent.qrPayload,
+        qrCodeUrl: intent.qrCodeUrl,
+        recipientAccount: intent.recipientAccount,
+        description: intent.description,
+        expiresAt: intent.expiresAt,
+      };
     }
 
     const box = await this.boxModel.findById(pkg.boxId);
@@ -758,6 +821,30 @@ export class PackagesService {
       dto.lockerCode,
       imageBuffer,
     );
+
+    if (result.requiresPayment) {
+      return {
+        requiresPayment: true,
+        action: 'PAYMENT_REQUIRED',
+        message:
+          result.message ||
+          `Bưu kiện tại ngăn số ${result.boxNumber} cần thanh toán phí trước khi nhận tủ.`,
+        boxNumber: result.boxNumber,
+        feeAmount: result.feeAmount,
+        orderCode: result.orderCode,
+        qrPayload: result.qrPayload,
+        paymentUrl: result.paymentUrl,
+        package: {
+          trackingNumber: result.trackingNumber,
+          receiverName: result.residentName,
+          receiverPhone: result.residentPhone,
+          apartment: result.apartment,
+        },
+        matchScore: result.matchScore,
+        livenessScore: result.livenessScore,
+        inferenceTimeMs: result.inferenceTimeMs,
+      };
+    }
 
     return {
       message: `Xác thực khuôn mặt thành công. Cửa ngăn tủ số ${result.boxNumber} đã mở!`,

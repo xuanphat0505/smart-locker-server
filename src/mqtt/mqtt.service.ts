@@ -251,6 +251,62 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  // Phát bản tin yêu cầu thanh toán cước phí lưu kho tới phần cứng trạm tủ Kiosk
+  async publishPaymentRequired(
+    lockerCode: string,
+    boxNumber: number,
+    paymentData: {
+      orderCode: number;
+      feeAmount: number;
+      qrPayload?: string;
+      paymentUrl?: string;
+      residentName?: string;
+      message?: string;
+    },
+  ): Promise<boolean> {
+    const formattedCode = lockerCode.trim().toUpperCase();
+    const topic = `smartlocker/${formattedCode}/control`;
+
+    const payload = JSON.stringify({
+      command: 'PAYMENT_REQUIRED',
+      lockerCode: formattedCode,
+      boxNumber,
+      orderCode: paymentData.orderCode,
+      feeAmount: paymentData.feeAmount,
+      qrPayload: paymentData.qrPayload || '',
+      paymentUrl: paymentData.paymentUrl || '',
+      residentName: paymentData.residentName || '',
+      message: paymentData.message || 'Bưu kiện cần nộp phí trước khi mở tủ',
+      timestamp: Date.now(),
+    });
+
+    if (!this.client || !this.isConnected) {
+      this.logger.warn(
+        `MQTT chưa kết nối hoặc đang offline. Đang xếp hàng gửi lệnh PAYMENT_REQUIRED cho Ngăn #${boxNumber} trạm ${formattedCode}`,
+      );
+    }
+
+    return new Promise((resolve) => {
+      if (!this.client) {
+        return resolve(false);
+      }
+
+      this.client.publish(topic, payload, { qos: 1 }, (err) => {
+        if (err) {
+          this.logger.error(
+            `Lỗi khi phát lệnh PAYMENT_REQUIRED tới ${topic}: ${err.message}`,
+          );
+          resolve(false);
+        } else {
+          this.logger.log(
+            `[MQTT_OUT] [${topic}] Đã phát lệnh PAYMENT_REQUIRED Ngăn #${boxNumber} (Order #${paymentData.orderCode}, Số tiền: ${paymentData.feeAmount} VNĐ)`,
+          );
+          resolve(true);
+        }
+      });
+    });
+  }
+
   // Kiểm tra trạng thái kết nối của MQTT Client
   isBrokerConnected(): boolean {
     return this.isConnected;
