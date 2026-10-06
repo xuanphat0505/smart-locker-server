@@ -25,6 +25,8 @@ import { AntiSpoofingService } from './anti-spoofing.service';
 import { FaceRecognitionService } from './face-recognition.service';
 import { FaceDetectorService } from './face-detector.service';
 import { MqttService } from '../../mqtt/mqtt.service';
+import { PaymentsService } from '../../payments/payments.service';
+import { PaymentType } from '../../payments/enums/payment.enums';
 import {
   VerifyFaceHardwareResult,
   EnrollFaceResult,
@@ -55,6 +57,7 @@ export class FaceVerificationService {
     private readonly faceRecognitionService: FaceRecognitionService,
     private readonly faceDetectorService: FaceDetectorService,
     private readonly mqttService: MqttService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   // Tính toán vector trung bình và chuẩn hóa chuẩn L2 từ danh sách các vector đặc trưng khuôn mặt đa góc
@@ -88,7 +91,7 @@ export class FaceVerificationService {
   // Kiểm tra độ chân thực chống giả mạo và trích xuất vector đặc trưng từ ảnh chụp khuôn mặt khi đăng ký
   async processEnrollmentBuffers(
     imageBuffers: Buffer[],
-    identifier = 'resident',
+    identifier?: string,
   ): Promise<ProcessEnrollmentResult> {
     if (!imageBuffers || imageBuffers.length === 0) {
       throw new BadRequestException(
@@ -234,11 +237,13 @@ export class FaceVerificationService {
       );
     }
 
-    // Buoc 4: Lay danh sach cac buu kien dang cho cu dan den lay tai tram tu nay
+    // Buoc 4: Lay danh sach cac buu kien dang cho cu dan den lay tai tram tu nay (bao gom ca buu kien qua han)
     const activePackages = await this.packageModel
       .find({
         lockerId: locker._id,
-        status: PackageStatus.WAITING_FOR_PICKUP,
+        status: {
+          $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
+        },
       })
       .populate({
         path: 'residentId',
@@ -297,6 +302,60 @@ export class FaceVerificationService {
 
     const matchedPkg = bestMatch.package;
     const matchedResident = bestMatch.resident;
+
+    // Kiem tra cuoc phi luu kho va tinh trang qua han cua buu kien
+    const feeInfo = await this.paymentsService.checkFee(String(matchedPkg._id));
+
+    if (feeInfo.feeDue > 0) {
+      // Khoi tao phien thanh toan SePay cho tram tu Kiosk
+      const intent = await this.paymentsService.createPaymentIntent({
+        packageId: String(matchedPkg._id),
+        paymentType: PaymentType.OVERDUE_PICKUP,
+        isKiosk: true,
+      });
+
+      const paymentMessage = feeInfo.isOverdue
+        ? `Bưu kiện tại Ngăn #${matchedPkg.boxNumber} đã quá hạn lưu kho. Vui lòng quét mã QR trên màn hình Kiosk để nộp phí mở tủ.`
+        : `Vui lòng quét mã QR trên màn hình Kiosk để thanh toán phí nhận hàng Ngăn #${matchedPkg.boxNumber}.`;
+
+      // Phat ban tin MQTT yeu cau tram tu hien thi ma QR thanh toan tren man hinh LCD
+      await this.mqttService.publishPaymentRequired(
+        locker.code,
+        matchedPkg.boxNumber,
+        {
+          orderCode: intent.orderCode,
+          feeAmount: intent.amount,
+          qrPayload: intent.qrPayload,
+          paymentUrl: intent.paymentUrl,
+          residentName: matchedResident.name || matchedPkg.receiverName,
+          message: paymentMessage,
+        },
+      );
+
+      this.logger.log(
+        `[FACE_PAYMENT_REQUIRED] Tram ${locker.code} - Cu dan ${matchedResident.name} - Ngan #${matchedPkg.boxNumber} can nop phi: ${intent.amount} VND (Order #${intent.orderCode})`,
+      );
+
+      const totalInferenceTime = Date.now() - startTime;
+
+      return {
+        success: false,
+        requiresPayment: true,
+        boxNumber: matchedPkg.boxNumber,
+        feeAmount: intent.amount,
+        orderCode: intent.orderCode,
+        qrPayload: intent.qrPayload,
+        paymentUrl: intent.paymentUrl,
+        message: paymentMessage,
+        residentName: matchedResident.name || matchedPkg.receiverName,
+        residentPhone: matchedResident.phone || matchedPkg.receiverPhone,
+        apartment: matchedResident.apartment || matchedPkg.apartment,
+        trackingNumber: matchedPkg.trackingNumber,
+        matchScore: bestMatch.score,
+        livenessScore: livenessResult.livenessScore,
+        inferenceTimeMs: totalInferenceTime,
+      };
+    }
 
     // Buoc 6: Giai phong ngan tu ve trang thai kha dung
     const box = await this.boxModel.findById(matchedPkg.boxId);
@@ -431,11 +490,13 @@ export class FaceVerificationService {
       );
     }
 
-    // Bước 5: Lấy danh sách các bưu kiện đang chờ nhận tại trạm tủ này
+    // Bước 5: Lấy danh sách các bưu kiện đang chờ nhận tại trạm tủ này (bao gồm cả bưu kiện quá hạn)
     const activePackages = await this.packageModel
       .find({
         lockerId: locker._id,
-        status: PackageStatus.WAITING_FOR_PICKUP,
+        status: {
+          $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
+        },
       })
       .populate({
         path: 'residentId',

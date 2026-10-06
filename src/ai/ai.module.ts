@@ -14,6 +14,7 @@ import {
   LockerLogSchema,
 } from '../lockers/schemas/locker-log.schema';
 import { MqttModule } from '../mqtt/mqtt.module';
+import { PaymentsModule } from '../payments/payments.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { MqttModule } from '../mqtt/mqtt.module';
       { name: LockerLog.name, schema: LockerLogSchema },
     ]),
     MqttModule,
+    PaymentsModule,
   ],
   controllers: [AiController],
   providers: [

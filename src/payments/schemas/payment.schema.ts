@@ -157,9 +157,6 @@ export class Payment extends Document {
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);
 
-// Chỉ mục tìm kiếm nhanh theo mã orderCode giao dịch duy nhất
-PaymentSchema.index({ orderCode: 1 }, { unique: true });
-
 // Chỉ mục tái sử dụng mã QR PENDING còn hạn cho từng kiện hàng
 PaymentSchema.index({ packageId: 1, status: 1, expiresAt: 1 });
 
