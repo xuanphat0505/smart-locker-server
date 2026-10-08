@@ -535,8 +535,10 @@ export class PackagesService {
     });
   }
 
-  // Xác thực mã OTP 6 số tại màn hình trạm tủ để mở khóa lấy đồ
-  async pickupWithOtp(dto: PickupOtpDto) {
+  // Xác thực mã OTP 6 số tại màn hình trạm tủ hoặc ứng dụng di động để mở khóa lấy đồ
+  async pickupWithOtp(dto: PickupOtpDto, authSource?: string) {
+    const isKiosk = authSource === 'DEVICE';
+
     const locker = await this.lockerModel
       .findOne({
         code: dto.lockerCode.trim().toUpperCase(),
@@ -590,26 +592,32 @@ export class PackagesService {
       const intent = await this.paymentsService.createPaymentIntent({
         packageId: String(pkg._id),
         paymentType: PaymentType.OVERDUE_PICKUP,
-        isKiosk: true,
+        isKiosk,
       });
 
       const paymentMessage = feeInfo.isOverdue
-        ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng quét mã QR trên màn hình để nộp phí mở tủ.'
-        : 'Vui lòng quét mã QR trên màn hình để thanh toán phí lượt nhận hàng.';
+        ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng nộp phí để mở tủ.'
+        : 'Vui lòng thanh toán phí lượt nhận hàng để mở tủ.';
 
-      // Phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR thanh toán trên màn hình LCD
-      await this.mqttService.publishPaymentRequired(
-        locker.code,
-        pkg.boxNumber,
-        {
-          orderCode: intent.orderCode,
-          feeAmount: intent.amount,
-          qrPayload: intent.qrPayload,
-          paymentUrl: intent.paymentUrl,
-          residentName: pkg.receiverName,
-          message: paymentMessage,
-        },
-      );
+      // Chỉ phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR trên màn hình LCD khi thao tác trực tiếp tại Kiosk
+      if (isKiosk) {
+        await this.mqttService.publishPaymentRequired(
+          locker.code,
+          pkg.boxNumber,
+          {
+            orderCode: intent.orderCode,
+            feeAmount: intent.amount,
+            qrPayload: intent.qrPayload,
+            paymentUrl: intent.paymentUrl,
+            residentName: pkg.receiverName,
+            message: paymentMessage,
+          },
+        );
+      } else {
+        this.logger.log(
+          `[MOBILE_PICKUP] Cư dân thao tác nhận hàng qua Mobile App (Kiện #${String(pkg._id)}) - Bỏ qua lệnh hiển thị QR trên màn hình LCD`,
+        );
+      }
 
       return {
         requiresPayment: true,
@@ -677,8 +685,10 @@ export class PackagesService {
     };
   }
 
-  // Quét mã QR token trước camera của trạm tủ để mở khóa lấy đồ
-  async pickupWithQr(dto: PickupQrDto) {
+  // Quét mã QR token trước camera của trạm tủ hoặc ứng dụng di động để mở khóa lấy đồ
+  async pickupWithQr(dto: PickupQrDto, authSource?: string) {
+    const isKiosk = authSource === 'DEVICE';
+
     const locker = await this.lockerModel.findOne({
       code: dto.lockerCode.trim().toUpperCase(),
     });
@@ -709,26 +719,32 @@ export class PackagesService {
       const intent = await this.paymentsService.createPaymentIntent({
         packageId: String(pkg._id),
         paymentType: PaymentType.OVERDUE_PICKUP,
-        isKiosk: true,
+        isKiosk,
       });
 
       const paymentMessage = feeInfo.isOverdue
-        ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng quét mã QR trên màn hình để nộp phí mở tủ.'
-        : 'Vui lòng quét mã QR trên màn hình để thanh toán phí lượt nhận hàng.';
+        ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng nộp phí để mở tủ.'
+        : 'Vui lòng thanh toán phí lượt nhận hàng để mở tủ.';
 
-      // Phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR thanh toán trên màn hình LCD
-      await this.mqttService.publishPaymentRequired(
-        locker.code,
-        pkg.boxNumber,
-        {
-          orderCode: intent.orderCode,
-          feeAmount: intent.amount,
-          qrPayload: intent.qrPayload,
-          paymentUrl: intent.paymentUrl,
-          residentName: pkg.receiverName,
-          message: paymentMessage,
-        },
-      );
+      // Chỉ phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR trên màn hình LCD khi thao tác trực tiếp tại Kiosk
+      if (isKiosk) {
+        await this.mqttService.publishPaymentRequired(
+          locker.code,
+          pkg.boxNumber,
+          {
+            orderCode: intent.orderCode,
+            feeAmount: intent.amount,
+            qrPayload: intent.qrPayload,
+            paymentUrl: intent.paymentUrl,
+            residentName: pkg.receiverName,
+            message: paymentMessage,
+          },
+        );
+      } else {
+        this.logger.log(
+          `[MOBILE_PICKUP_QR] Cư dân thao tác nhận hàng qua Mobile App (Kiện #${String(pkg._id)}) - Bỏ qua lệnh hiển thị QR trên màn hình LCD`,
+        );
+      }
 
       return {
         requiresPayment: true,

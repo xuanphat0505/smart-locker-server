@@ -229,16 +229,29 @@ export class PaymentsService {
       );
     }
 
-    const activePendingPayment = await this.paymentModel.findOne({
-      packageId: pkg._id,
-      status: PaymentStatus.PENDING,
-      expiresAt: { $gt: new Date() },
-    });
+    // Tìm giao dịch chờ thanh toán gần nhất của kiện hàng này
+    const activePendingPayment = await this.paymentModel
+      .findOne({
+        packageId: pkg._id,
+        status: PaymentStatus.PENDING,
+      })
+      .sort({ createdAt: -1 });
 
     if (
       activePendingPayment &&
       activePendingPayment.amount === feeInfo.feeDue
     ) {
+      // Gia hạn thời gian chờ thanh toán thêm 15 phút tính từ thời điểm hiện tại
+      const renewedExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+      const isKioskMode = dto.isKiosk ?? activePendingPayment.isKiosk ?? false;
+
+      activePendingPayment.expiresAt = renewedExpiresAt;
+      activePendingPayment.isKiosk = isKioskMode;
+      if (userId && !activePendingPayment.userId) {
+        activePendingPayment.userId = new Types.ObjectId(userId);
+      }
+      await activePendingPayment.save();
+
       const checkoutFormFields = initSepayOneTimePaymentFields({
         orderCode: activePendingPayment.orderCode,
         amount: activePendingPayment.amount,
@@ -250,6 +263,10 @@ export class PaymentsService {
           ),
       });
 
+      this.logger.log(
+        `[PAYMENT_INTENT_REUSE] Tái sử dụng và gia hạn đơn hàng PENDING #${activePendingPayment.orderCode} - Hạn mới: ${renewedExpiresAt.toISOString()}`,
+      );
+
       return {
         orderCode: activePendingPayment.orderCode,
         amount: activePendingPayment.amount,
@@ -259,14 +276,18 @@ export class PaymentsService {
         qrCodeUrl: activePendingPayment.qrCodeUrl,
         qrPayload: activePendingPayment.qrPayload,
         recipientAccount: activePendingPayment.recipientAccount,
-        expiresAt: activePendingPayment.expiresAt,
-        isKiosk: activePendingPayment.isKiosk ?? false,
+        expiresAt: renewedExpiresAt,
+        isKiosk: isKioskMode,
       };
     }
 
+    // Hủy các đơn chờ thanh toán cũ nếu số tiền phí đã thay đổi do chuyển khung giờ
     if (activePendingPayment) {
-      await this.paymentModel.updateOne(
-        { _id: activePendingPayment._id },
+      await this.paymentModel.updateMany(
+        {
+          packageId: pkg._id,
+          status: PaymentStatus.PENDING,
+        },
         { status: PaymentStatus.CANCELLED },
       );
     }
@@ -396,14 +417,27 @@ export class PaymentsService {
     const subscriptionFee =
       building.pricingPolicy?.monthlySubscriptionFee ?? 30000;
 
-    const activePending = await this.paymentModel.findOne({
-      userId: user._id,
-      paymentType: PaymentType.MONTHLY_SUBSCRIPTION,
-      status: PaymentStatus.PENDING,
-      expiresAt: { $gt: new Date() },
-    });
+    // Tìm giao dịch đăng ký gói tháng chờ thanh toán gần nhất của cư dân
+    const activePending = await this.paymentModel
+      .findOne({
+        userId: user._id,
+        paymentType: PaymentType.MONTHLY_SUBSCRIPTION,
+        status: PaymentStatus.PENDING,
+      })
+      .sort({ createdAt: -1 });
 
     if (activePending && activePending.amount === subscriptionFee) {
+      // Gia hạn thời gian chờ thanh toán thêm 15 phút tính từ thời điểm hiện tại
+      const renewedExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+      activePending.expiresAt = renewedExpiresAt;
+      if (
+        buildingId &&
+        String(activePending.buildingId) !== String(buildingId)
+      ) {
+        activePending.buildingId = building._id as unknown as Types.ObjectId;
+      }
+      await activePending.save();
+
       const checkoutFormFields = initSepayOneTimePaymentFields({
         orderCode: activePending.orderCode,
         amount: activePending.amount,
@@ -411,6 +445,10 @@ export class PaymentsService {
           activePending.description ||
           generateSepayTransferContent('SUB', activePending.orderCode),
       });
+
+      this.logger.log(
+        `[SUBSCRIPTION_INTENT_REUSE] Tái sử dụng và gia hạn đơn hàng gói tháng PENDING #${activePending.orderCode} - Hạn mới: ${renewedExpiresAt.toISOString()}`,
+      );
 
       return {
         orderCode: activePending.orderCode,
@@ -421,13 +459,18 @@ export class PaymentsService {
         qrCodeUrl: activePending.qrCodeUrl,
         qrPayload: activePending.qrPayload,
         recipientAccount: activePending.recipientAccount,
-        expiresAt: activePending.expiresAt,
+        expiresAt: renewedExpiresAt,
       };
     }
 
+    // Hủy các đơn chờ thanh toán cũ nếu biểu phí gói tháng có sự thay đổi
     if (activePending) {
-      await this.paymentModel.updateOne(
-        { _id: activePending._id },
+      await this.paymentModel.updateMany(
+        {
+          userId: user._id,
+          paymentType: PaymentType.MONTHLY_SUBSCRIPTION,
+          status: PaymentStatus.PENDING,
+        },
         { status: PaymentStatus.CANCELLED },
       );
     }
@@ -518,7 +561,6 @@ export class PaymentsService {
       {
         orderCode,
         status: PaymentStatus.PENDING,
-        expiresAt: { $gt: new Date() },
       },
       {
         $set: {
@@ -599,16 +641,35 @@ export class PaymentsService {
       baseTime + (payment.extensionHours || 24) * 3600 * 1000,
     );
 
-    await this.packageModel.updateOne(
-      { _id: payment.packageId },
+    // Chỉ khôi phục sang WAITING_FOR_PICKUP nếu đơn hàng đang ở trạng thái OVERDUE
+    const updateSet: Record<string, any> = {
+      paidUntil: newPaidUntil,
+    };
+    if (pkg.status === PackageStatus.OVERDUE) {
+      updateSet.status = PackageStatus.WAITING_FOR_PICKUP;
+    }
+
+    const updateResult = await this.packageModel.updateOne(
       {
-        $set: {
-          paidUntil: newPaidUntil,
-          status: PackageStatus.WAITING_FOR_PICKUP,
-        },
+        _id: payment.packageId,
+        status: { $ne: PackageStatus.PICKED_UP },
+      },
+      {
+        $set: updateSet,
         $inc: { totalFeePaid: payment.amount },
       },
     );
+
+    // Nếu đơn hàng đã hoàn tất nhận hàng trước đó chỉ ghi nhận phí và gia hạn bảo chứng
+    if (updateResult.matchedCount === 0) {
+      await this.packageModel.updateOne(
+        { _id: payment.packageId },
+        {
+          $set: { paidUntil: newPaidUntil },
+          $inc: { totalFeePaid: payment.amount },
+        },
+      );
+    }
 
     this.logger.log(
       `[PAYMENT_SUCCESS] Giao dịch #${orderCode} xác nhận thành công - Gia hạn tới ${newPaidUntil.toISOString()}`,
@@ -914,16 +975,35 @@ export class PaymentsService {
         baseTime + (payment.extensionHours || 24) * 3600 * 1000,
       );
 
-      await this.packageModel.updateOne(
-        { _id: payment.packageId },
+      // Chỉ khôi phục sang WAITING_FOR_PICKUP nếu đơn hàng đang ở trạng thái OVERDUE
+      const updateSet: Record<string, any> = {
+        paidUntil: newPaidUntil,
+      };
+      if (pkg.status === PackageStatus.OVERDUE) {
+        updateSet.status = PackageStatus.WAITING_FOR_PICKUP;
+      }
+
+      const updateResult = await this.packageModel.updateOne(
         {
-          $set: {
-            paidUntil: newPaidUntil,
-            status: PackageStatus.WAITING_FOR_PICKUP,
-          },
+          _id: payment.packageId,
+          status: { $ne: PackageStatus.PICKED_UP },
+        },
+        {
+          $set: updateSet,
           $inc: { totalFeePaid: payment.amount },
         },
       );
+
+      // Nếu đơn hàng đã hoàn tất nhận hàng trước đó chỉ ghi nhận phí và gia hạn bảo chứng
+      if (updateResult.matchedCount === 0) {
+        await this.packageModel.updateOne(
+          { _id: payment.packageId },
+          {
+            $set: { paidUntil: newPaidUntil },
+            $inc: { totalFeePaid: payment.amount },
+          },
+        );
+      }
 
       this.logger.log(
         `[SEPAY_MOBILE] Giao dịch #${orderCode} từ Mobile thành công - Gia hạn tới ${newPaidUntil.toISOString()} (Cửa tủ giữ đóng an toàn)`,
