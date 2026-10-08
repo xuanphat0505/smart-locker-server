@@ -74,20 +74,26 @@ export class PackagesController {
     return this.packagesService.dropOff(dto);
   }
 
-  // Nhập mã OTP 6 số tại màn hình trạm tủ để mở khóa lấy bưu kiện
+  // Nhập mã OTP 6 số tại màn hình trạm tủ hoặc ứng dụng di động để mở khóa lấy bưu kiện
   @Post('pickup/otp')
   @UseGuards(PickupAuthGuard)
   @ApiPickupOtpDoc()
-  async pickupWithOtp(@Body() dto: PickupOtpDto) {
-    return this.packagesService.pickupWithOtp(dto);
+  async pickupWithOtp(
+    @Body() dto: PickupOtpDto,
+    @Request() req: { authSource: string },
+  ) {
+    return this.packagesService.pickupWithOtp(dto, req?.authSource);
   }
 
-  // Quét mã QR token trước camera trạm tủ để mở khóa lấy bưu kiện
+  // Quét mã QR token trước camera trạm tủ hoặc ứng dụng di động để mở khóa lấy bưu kiện
   @Post('pickup/qr')
   @UseGuards(PickupAuthGuard)
   @ApiPickupQrDoc()
-  async pickupWithQr(@Body() dto: PickupQrDto) {
-    return this.packagesService.pickupWithQr(dto);
+  async pickupWithQr(
+    @Body() dto: PickupQrDto,
+    @Request() req: { authSource: string },
+  ) {
+    return this.packagesService.pickupWithQr(dto, req?.authSource);
   }
 
   // Nhận diện khuôn mặt cư dân trước camera trạm tủ để mở khóa lấy bưu kiện
