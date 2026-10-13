@@ -3,13 +3,14 @@ import {
   IsNotEmpty,
   IsNumber,
   Min,
+  Max,
   IsOptional,
   IsEnum,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { BoxSize } from '../enums';
+import { BoxSize, LockerStatus } from '../enums';
 
 // Cấu hình kích cỡ cho từng ngăn tủ cụ thể khi khởi tạo trạm tủ
 export class BoxConfigDto {
@@ -31,10 +32,14 @@ export class BoxConfigDto {
 export class CoordinatesDto {
   @ApiProperty({ example: 10.84231, description: 'Vĩ độ GPS' })
   @IsNumber()
+  @Min(-90)
+  @Max(90)
   latitude: number;
 
   @ApiProperty({ example: 106.84025, description: 'Kinh độ GPS' })
   @IsNumber()
+  @Min(-180)
+  @Max(180)
   longitude: number;
 }
 
@@ -124,4 +129,41 @@ export class LookupReceiverDto {
   @IsString()
   @IsNotEmpty()
   lockerCode: string;
+}
+
+// DTO cập nhật thông tin và tọa độ vị trí trạm tủ
+export class UpdateLockerDto {
+  @ApiPropertyOptional({
+    example: 'Trạm Tủ Sảnh Chính Tòa S1.01',
+    description: 'Tên hiển thị của trạm tủ',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @IsOptional()
+  name?: string;
+
+  @ApiPropertyOptional({
+    example: 'Cạnh quầy lễ tân sảnh A tầng 1',
+    description: 'Vị trí đặt tủ chi tiết',
+  })
+  @IsString()
+  @IsOptional()
+  locationDescription?: string;
+
+  @ApiPropertyOptional({
+    enum: LockerStatus,
+    description: 'Trạng thái hoạt động của trạm tủ',
+  })
+  @IsEnum(LockerStatus)
+  @IsOptional()
+  status?: LockerStatus;
+
+  @ApiPropertyOptional({
+    type: CoordinatesDto,
+    description: 'Tọa độ GPS trạm tủ',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CoordinatesDto)
+  coordinates?: CoordinatesDto;
 }

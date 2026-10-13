@@ -56,7 +56,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   private connect() {
     const rawBrokerUrl =
       this.configService.get<string>('MQTT_BROKER_URL') ||
-      'broker.emqx.io:1883';
+      'broker.hivemq.com:1883';
 
     let brokerUrl = rawBrokerUrl.trim();
     if (
@@ -166,7 +166,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
           if (event === 'OFFLINE') {
             await this.lockerModel.updateOne(
-              { code: lockerCode },
+              { code: lockerCode, status: { $ne: LockerStatus.MAINTENANCE } },
               { status: LockerStatus.OFFLINE },
             );
             this.logger.warn(
@@ -181,12 +181,15 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
             event === 'ITEM_DETECTED' ||
             event === 'ITEM_REMOVED'
           ) {
+            const now = new Date();
+            // Trạm tủ đang bảo trì vẫn ghi nhận nhịp tim nhưng không bị ghi đè trạng thái
             await this.lockerModel.updateOne(
-              { code: lockerCode },
-              {
-                status: LockerStatus.ONLINE,
-                lastHeartbeatAt: new Date(),
-              },
+              { code: lockerCode, status: { $ne: LockerStatus.MAINTENANCE } },
+              { status: LockerStatus.ONLINE, lastHeartbeatAt: now },
+            );
+            await this.lockerModel.updateOne(
+              { code: lockerCode, status: LockerStatus.MAINTENANCE },
+              { lastHeartbeatAt: now },
             );
           }
 
