@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -11,10 +12,29 @@ import { Locker } from './schemas/locker.schema';
 import { Box } from './schemas/box.schema';
 import { User } from '../users/schemas/user.schema';
 import { Building } from '../buildings/schemas/building.schema';
-import { CreateLockerDto } from './dto';
+import { CreateLockerDto, UpdateLockerDto } from './dto';
 import { LockerStatus, BoxStatus, BoxSize, DoorStatus } from './enums';
 import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
+import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
+
+// Quá khoảng thời gian này không có nhịp tim thì trạm tủ được coi là mất kết nối
+const HEARTBEAT_TIMEOUT_MS = 75000;
+
+// Trạm tủ trả về cho trang quản trị, kèm trạng thái hiệu lực và số ngăn trống/đang chứa hàng
+export interface LockerListItem {
+  _id: Types.ObjectId;
+  name: string;
+  code: string;
+  status: LockerStatus;
+  totalBoxes: number;
+  availableBoxes: number;
+  occupiedBoxes: number;
+  lastHeartbeatAt?: Date;
+  locationDescription?: string;
+  coordinates?: { latitude: number; longitude: number };
+  buildingId: unknown;
+}
 
 @Injectable()
 export class LockersService {
@@ -153,7 +173,7 @@ export class LockersService {
     const isOnline =
       locker.status === LockerStatus.ONLINE &&
       lastHeartbeat > 0 &&
-      diffMs <= 75000;
+      diffMs <= HEARTBEAT_TIMEOUT_MS;
 
     return {
       code: locker.code,
@@ -226,12 +246,77 @@ export class LockersService {
     };
   }
 
-  // Lấy danh sách toàn bộ các trạm tủ trong hệ sinh thái
-  async findAll(): Promise<Locker[]> {
-    return this.lockerModel
-      .find()
+  // Lấy danh sách trạm tủ: System Admin thấy toàn hệ thống, Building Admin chỉ thấy tủ thuộc tòa nhà của mình
+  async findAll(user: AuthenticatedUser): Promise<LockerListItem[]> {
+    const filter: Record<string, unknown> = {};
+    if (user.role === Role.BUILDING_ADMIN) {
+      if (!user.buildingId || !Types.ObjectId.isValid(user.buildingId)) {
+        throw new ForbiddenException(
+          'Tài khoản quản lý chưa được gán tòa nhà nên không thể xem trạm tủ',
+        );
+      }
+      filter.buildingId = new Types.ObjectId(user.buildingId);
+    }
+
+    const lockers = await this.lockerModel
+      .find(filter)
       .populate('buildingId', 'name code address')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (lockers.length === 0) {
+      return [];
+    }
+
+    // Đếm số ngăn trống và số ngăn đang chứa hàng của từng trạm
+    const boxCounts = await this.boxModel.aggregate<{
+      _id: Types.ObjectId;
+      available: number;
+      occupied: number;
+    }>([
+      { $match: { lockerId: { $in: lockers.map((l) => l._id) } } },
+      {
+        $group: {
+          _id: '$lockerId',
+          available: {
+            $sum: { $cond: [{ $eq: ['$status', BoxStatus.AVAILABLE] }, 1, 0] },
+          },
+          occupied: {
+            $sum: { $cond: [{ $eq: ['$status', BoxStatus.OCCUPIED] }, 1, 0] },
+          },
+        },
+      },
+    ]);
+    const countByLocker = new Map(boxCounts.map((c) => [String(c._id), c]));
+
+    return lockers.map((locker) => {
+      const counts = countByLocker.get(String(locker._id));
+      return {
+        ...locker,
+        status: this.resolveEffectiveStatus(
+          locker.status,
+          locker.lastHeartbeatAt,
+        ),
+        availableBoxes: counts?.available ?? 0,
+        occupiedBoxes: counts?.occupied ?? 0,
+      };
+    });
+  }
+
+  // Tính trạng thái thực tế: tủ báo ONLINE nhưng quá hạn nhịp tim thì coi là OFFLINE
+  private resolveEffectiveStatus(
+    status: LockerStatus,
+    lastHeartbeatAt?: Date,
+  ): LockerStatus {
+    if (status !== LockerStatus.ONLINE) {
+      return status;
+    }
+    const lastHeartbeat = lastHeartbeatAt
+      ? new Date(lastHeartbeatAt).getTime()
+      : 0;
+    const isAlive =
+      lastHeartbeat > 0 && Date.now() - lastHeartbeat <= HEARTBEAT_TIMEOUT_MS;
+    return isAlive ? LockerStatus.ONLINE : LockerStatus.OFFLINE;
   }
 
   // Tìm kiếm trạm tủ theo mã định danh id
@@ -249,5 +334,71 @@ export class LockersService {
     }
 
     return locker;
+  }
+
+  // Cập nhật thông tin cấu hình, vị trí hoặc tọa độ GPS trạm tủ (id có thể là ObjectId hoặc mã code)
+  async update(
+    id: string,
+    dto: UpdateLockerDto,
+    user: AuthenticatedUser,
+  ): Promise<Locker> {
+    let locker = Types.ObjectId.isValid(id)
+      ? await this.lockerModel.findById(id)
+      : null;
+
+    if (!locker) {
+      locker = await this.lockerModel.findOne({
+        code: id.trim().toUpperCase(),
+      });
+    }
+
+    if (!locker) {
+      throw new NotFoundException('Trạm tủ không tồn tại trong hệ thống');
+    }
+
+    // Building Admin chỉ được chỉnh sửa trạm tủ thuộc tòa nhà do mình quản lý
+    if (
+      user.role === Role.BUILDING_ADMIN &&
+      String(locker.buildingId) !== String(user.buildingId)
+    ) {
+      throw new ForbiddenException(
+        'Bạn không có quyền chỉnh sửa trạm tủ của tòa nhà khác',
+      );
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (dto.name !== undefined) {
+      updateData.name = dto.name.trim();
+    }
+    if (dto.locationDescription !== undefined) {
+      updateData.locationDescription = dto.locationDescription.trim();
+    }
+    if (dto.status !== undefined) {
+      updateData.status = dto.status;
+    }
+    if (dto.coordinates !== undefined) {
+      updateData.coordinates = {
+        latitude: dto.coordinates.latitude,
+        longitude: dto.coordinates.longitude,
+      };
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      throw new BadRequestException('Không có thông tin nào để cập nhật');
+    }
+
+    const updated = await this.lockerModel
+      .findByIdAndUpdate(
+        locker._id,
+        { $set: updateData },
+        { returnDocument: 'after' },
+      )
+      .populate('buildingId', 'name code address');
+
+    if (!updated) {
+      throw new NotFoundException('Trạm tủ không tồn tại trong hệ thống');
+    }
+
+    return updated;
   }
 }

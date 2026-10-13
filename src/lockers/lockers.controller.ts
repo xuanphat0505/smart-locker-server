@@ -2,25 +2,29 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Param,
   Body,
   Query,
+  Request,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { LockersService } from './lockers.service';
-import { CreateLockerDto, LookupReceiverDto } from './dto';
+import { LockersService, LockerListItem } from './lockers.service';
+import { CreateLockerDto, UpdateLockerDto, LookupReceiverDto } from './dto';
 import { Locker } from './schemas/locker.schema';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
+import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import {
   ApiGetLockerByCodeDoc,
   ApiGetLockerBoxesDoc,
   ApiLookupReceiverDoc,
   ApiCreateLockerDoc,
   ApiFindAllLockersDoc,
+  ApiUpdateLockerDoc,
 } from './swagger/locker.swagger';
 
 @ApiTags('Lockers')
@@ -61,8 +65,10 @@ export class LockersController {
   @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
   @ApiBearerAuth('JWT-auth')
   @ApiFindAllLockersDoc()
-  async findAll(): Promise<Locker[]> {
-    return this.lockersService.findAll();
+  async findAll(
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<LockerListItem[]> {
+    return this.lockersService.findAll(req.user);
   }
 
   // Khởi tạo trạm tủ mới kèm các ngăn tủ con (Dành riêng cho System Admin)
@@ -73,5 +79,19 @@ export class LockersController {
   @ApiCreateLockerDoc()
   async create(@Body() dto: CreateLockerDto): Promise<Locker> {
     return this.lockersService.create(dto);
+  }
+
+  // Cập nhật thông tin và tọa độ vị trí trạm tủ (Dành cho Quản trị viên)
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
+  @ApiBearerAuth('JWT-auth')
+  @ApiUpdateLockerDoc()
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateLockerDto,
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<Locker> {
+    return this.lockersService.update(id, dto, req.user);
   }
 }

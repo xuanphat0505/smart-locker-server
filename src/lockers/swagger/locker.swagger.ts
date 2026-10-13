@@ -115,3 +115,26 @@ export function ApiFindAllLockersDoc() {
     }),
   );
 }
+
+// Tài liệu Swagger cho endpoint cập nhật thông tin và tọa độ trạm tủ
+export function ApiUpdateLockerDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Cập nhật thông tin và tọa độ vị trí trạm tủ',
+      description:
+        'Cho phép cập nhật tên, vị trí mô tả, trạng thái và tọa độ GPS. Building Admin chỉ được sửa trạm tủ thuộc tòa nhà của mình',
+    }),
+    ApiParam({
+      name: 'id',
+      required: true,
+      example: 'LK-S101-01',
+      description: 'ObjectId hoặc mã Code của trạm tủ',
+    }),
+    ApiResponse({ status: 200, description: 'Cập nhật thành công' }),
+    ApiResponse({
+      status: 403,
+      description: 'Trạm tủ thuộc tòa nhà khác, không đủ quyền chỉnh sửa',
+    }),
+    ApiResponse({ status: 404, description: 'Trạm tủ không tồn tại' }),
+  );
+}
