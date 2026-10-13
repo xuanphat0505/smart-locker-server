@@ -60,3 +60,72 @@ export class CreateSubscriptionIntentDto {
   @IsString({ message: 'Mã tòa nhà phải là chuỗi ký tự' })
   buildingId?: string;
 }
+
+// DTO một chặng trong bảng phí lưu kho
+export class PricingTierDto {
+  @ApiProperty({
+    enum: ['FREE', 'TIER_1', 'TIER_2', 'RETRIEVAL'],
+    example: 'TIER_1',
+    description:
+      'Chặng phí: FREE khi giờ lưu kho <= T1, TIER_1 khi <= T2, TIER_2 khi < T3, RETRIEVAL khi >= T3',
+  })
+  tier: 'FREE' | 'TIER_1' | 'TIER_2' | 'RETRIEVAL';
+
+  @ApiProperty({ example: 12, description: 'Mốc giờ bắt đầu của chặng' })
+  fromHours: number;
+
+  @ApiProperty({
+    example: 24,
+    nullable: true,
+    description: 'Mốc giờ kết thúc của chặng, null với chặng thu hồi',
+  })
+  toHours: number | null;
+
+  @ApiProperty({ example: 10000, description: 'Tổng phí với cư dân có gói tháng (VNĐ)' })
+  subscriberFee: number;
+
+  @ApiProperty({ example: 15000, description: 'Tổng phí với khách dùng theo lượt (VNĐ)' })
+  retailFee: number;
+}
+
+// DTO cấu hình biểu phí trả về cho cư dân
+export class PricingPolicyResponseDto {
+  @ApiProperty({ example: 30000 })
+  monthlySubscriptionFee: number;
+
+  @ApiProperty({ example: 5000 })
+  perUseFee: number;
+
+  @ApiProperty({ example: 12 })
+  t1Hours: number;
+
+  @ApiProperty({ example: 24 })
+  t2Hours: number;
+
+  @ApiProperty({ example: 48 })
+  t3Hours: number;
+
+  @ApiProperty({ example: 10000 })
+  feeX1: number;
+
+  @ApiProperty({ example: 15000 })
+  feeX2: number;
+
+  @ApiProperty({ example: 25000 })
+  maxOverdueFeeCap: number;
+}
+
+// DTO phản hồi biểu phí của tòa nhà dành cho cư dân
+export class ResidentPricingResponseDto {
+  @ApiProperty({ example: '6a95091f1e23b42475f441d3' })
+  buildingId: string;
+
+  @ApiProperty({ example: 'Tecco Tower Linh Đông' })
+  buildingName: string;
+
+  @ApiProperty({ type: () => PricingPolicyResponseDto })
+  policy: PricingPolicyResponseDto;
+
+  @ApiProperty({ type: () => PricingTierDto, isArray: true })
+  tiers: PricingTierDto[];
+}
