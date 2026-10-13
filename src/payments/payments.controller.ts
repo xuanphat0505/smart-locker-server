@@ -31,6 +31,7 @@ import {
   ApiGetMyPaymentsDoc,
   ApiGetPaymentByOrderCodeDoc,
   ApiKioskPickupDoc,
+  ApiGetResidentPricingDoc,
 } from './swagger';
 
 @ApiTags('Payments')
@@ -38,6 +39,16 @@ import {
 export class PaymentsController {
   // Khởi tạo PaymentsController với dịch vụ PaymentsService
   constructor(private readonly paymentsService: PaymentsService) {}
+
+  // Cư dân xem biểu phí lưu kho (mốc T1/T2/T3 và mức phí từng chặng) của tòa nhà mình
+  @Get('pricing-policy')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.RESIDENT)
+  @ApiBearerAuth('JWT-auth')
+  @ApiGetResidentPricingDoc()
+  async getPricingPolicy(@Request() req: { user: AuthenticatedUser }) {
+    return this.paymentsService.getResidentPricing(req.user.buildingId);
+  }
 
   // Kiểm tra phí quá hạn và các mốc thời gian gia hạn của bưu kiện
   @Get('package/:packageId/fee')

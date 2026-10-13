@@ -8,15 +8,43 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Building } from './schemas/building.schema';
 import { User } from '../users/schemas/user.schema';
-import { CreateBuildingDto, UpdateBuildingDto } from './dto';
+import {
+  CreateBuildingDto,
+  UpdateBuildingDto,
+  PublicBuildingResponseDto,
+} from './dto';
 import { BuildingStatus } from './enums/building-status.enum';
+import { DEFAULT_PRICING_POLICY } from '../payments/utils/pricing-policy.util';
+
+// Danh sách trường được phép trả về cho API công khai (whitelist, trường mới thêm vào schema mặc định bị ẩn)
+const PUBLIC_BUILDING_FIELDS = [
+  'name',
+  'code',
+  'address',
+  'totalFloors',
+  'totalApartments',
+  'hotline',
+  'status',
+  'description',
+  'location',
+  'createdAt',
+  'updatedAt',
+] as const;
+
+// Biểu thức chọn trường dạng chuỗi dùng cho find().select()
+const PUBLIC_BUILDING_SELECT = PUBLIC_BUILDING_FIELDS.join(' ');
+
+// Biểu thức $project dạng đối tượng dùng cho aggregate
+const PUBLIC_BUILDING_PROJECTION = Object.fromEntries(
+  PUBLIC_BUILDING_FIELDS.map((field) => [field, 1]),
+);
 
 @Injectable()
 export class BuildingsService {
   constructor(
     @InjectModel(Building.name) private buildingModel: Model<Building>,
     @InjectModel(User.name) private userModel: Model<User>,
-  ) {}
+  ) { }
 
   // Khởi tạo một Tòa Nhà mới vào cơ sở dữ liệu
   async create(dto: CreateBuildingDto): Promise<Building> {
@@ -56,12 +84,22 @@ export class BuildingsService {
     return this.buildingModel.find(filter).sort({ name: 1 }).exec();
   }
 
+  // Lấy danh sách Tòa Nhà đang hoạt động cho API công khai, chỉ gồm các trường trong whitelist
+  async findAllPublic(): Promise<PublicBuildingResponseDto[]> {
+    return this.buildingModel
+      .find({ status: BuildingStatus.ACTIVE })
+      .select(PUBLIC_BUILDING_SELECT)
+      .sort({ name: 1 })
+      .lean<PublicBuildingResponseDto[]>()
+      .exec();
+  }
+
   // Tìm kiếm danh sách Tòa Nhà gần vị trí GPS hiện tại sử dụng chỉ mục 2dsphere
   async findNearby(
     lat: number,
     lng: number,
     radiusInMeters = 5000,
-  ): Promise<any[]> {
+  ): Promise<PublicBuildingResponseDto[]> {
     return this.buildingModel.aggregate([
       {
         $geoNear: {
@@ -78,7 +116,28 @@ export class BuildingsService {
       {
         $sort: { distance: 1 },
       },
+      {
+        $project: { ...PUBLIC_BUILDING_PROJECTION, distance: 1 },
+      },
     ]);
+  }
+
+  // Lấy chi tiết một Tòa Nhà cho API công khai, chỉ gồm các trường trong whitelist
+  async findPublicById(id: string): Promise<PublicBuildingResponseDto> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Mã tòa nhà không hợp lệ');
+    }
+
+    const building = await this.buildingModel
+      .findById(id)
+      .select(PUBLIC_BUILDING_SELECT)
+      .lean<PublicBuildingResponseDto>()
+      .exec();
+
+    if (!building) {
+      throw new NotFoundException('Không tìm thấy thông tin tòa nhà');
+    }
+    return building;
   }
 
   // Tìm kiếm thông tin chi tiết một Tòa Nhà theo mã định danh ObjectId
@@ -143,16 +202,7 @@ export class BuildingsService {
     // Hợp nhất an toàn và kiểm tra tính hợp lý của biểu phí 4 chặng
     if (pricingPolicy) {
       const mergedPolicy = {
-        ...(current.pricingPolicy || {
-          monthlySubscriptionFee: 30000,
-          perUseFee: 5000,
-          t1Hours: 12,
-          t2Hours: 24,
-          t3Hours: 48,
-          feeX1: 10000,
-          feeX2: 15000,
-          maxOverdueFeeCap: 25000,
-        }),
+        ...(current.pricingPolicy || DEFAULT_PRICING_POLICY),
         ...pricingPolicy,
       };
 

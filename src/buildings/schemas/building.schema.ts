@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory, raw } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { BuildingStatus } from '../enums/building-status.enum';
+import { DEFAULT_PRICING_POLICY } from '../../payments/utils/pricing-policy.util';
 
 @Schema({ timestamps: true })
 export class Building extends Document {
@@ -81,14 +82,38 @@ export class Building extends Document {
   // Cấu hình biểu phí 4 chặng do Ban Quản Lý thiết lập
   @Prop(
     raw({
-      monthlySubscriptionFee: { type: Number, default: 30000, min: 0 },
-      perUseFee: { type: Number, default: 5000, min: 0 },
-      t1Hours: { type: Number, default: 12, min: 1 },
-      t2Hours: { type: Number, default: 24, min: 1 },
-      t3Hours: { type: Number, default: 48, min: 1 },
-      feeX1: { type: Number, default: 10000, min: 0 },
-      feeX2: { type: Number, default: 15000, min: 0 },
-      maxOverdueFeeCap: { type: Number, default: 25000, min: 0 },
+      monthlySubscriptionFee: {
+        type: Number,
+        default: DEFAULT_PRICING_POLICY.monthlySubscriptionFee,
+        min: 0,
+      },
+      perUseFee: {
+        type: Number,
+        default: DEFAULT_PRICING_POLICY.perUseFee,
+        min: 0,
+      },
+      t1Hours: {
+        type: Number,
+        default: DEFAULT_PRICING_POLICY.t1Hours,
+        min: 1,
+      },
+      t2Hours: {
+        type: Number,
+        default: DEFAULT_PRICING_POLICY.t2Hours,
+        min: 1,
+      },
+      t3Hours: {
+        type: Number,
+        default: DEFAULT_PRICING_POLICY.t3Hours,
+        min: 1,
+      },
+      feeX1: { type: Number, default: DEFAULT_PRICING_POLICY.feeX1, min: 0 },
+      feeX2: { type: Number, default: DEFAULT_PRICING_POLICY.feeX2, min: 0 },
+      maxOverdueFeeCap: {
+        type: Number,
+        default: DEFAULT_PRICING_POLICY.maxOverdueFeeCap,
+        min: 0,
+      },
     }),
   )
   pricingPolicy?: {

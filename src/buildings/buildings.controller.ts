@@ -17,8 +17,8 @@ import {
   CreateBuildingDto,
   UpdateBuildingDto,
   FindNearbyBuildingsDto,
+  PublicBuildingResponseDto,
 } from './dto';
-import { BuildingStatus } from './enums/building-status.enum';
 import { Building } from './schemas/building.schema';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -41,17 +41,19 @@ import {
 export class BuildingsController {
   constructor(private readonly buildingsService: BuildingsService) {}
 
-  // Lấy danh sách các Tòa Nhà trong hệ thống (API công khai phục vụ Mobile App)
+  // Lấy danh sách các Tòa Nhà đang hoạt động (API công khai phục vụ Mobile App, không chứa thông tin thanh toán)
   @Get()
   @ApiFindAllBuildingsDoc()
-  async findAll(@Query('status') status?: BuildingStatus): Promise<Building[]> {
-    return this.buildingsService.findAll(status || BuildingStatus.ACTIVE);
+  async findAll(): Promise<PublicBuildingResponseDto[]> {
+    return this.buildingsService.findAllPublic();
   }
 
   // Tìm kiếm danh sách Tòa Nhà gần vị trí GPS hiện tại (API công khai phục vụ Mobile App)
   @Get('nearby')
   @ApiFindNearbyBuildingsDoc()
-  async findNearby(@Query() query: FindNearbyBuildingsDto): Promise<any[]> {
+  async findNearby(
+    @Query() query: FindNearbyBuildingsDto,
+  ): Promise<PublicBuildingResponseDto[]> {
     return this.buildingsService.findNearby(query.lat, query.lng, query.radius);
   }
 
@@ -80,11 +82,11 @@ export class BuildingsController {
     return this.buildingsService.updateMyBuilding(req.user.buildingId, dto);
   }
 
-  // Lấy thông tin chi tiết một Tòa Nhà theo mã id
+  // Lấy thông tin chi tiết một Tòa Nhà theo mã id (API công khai, không chứa thông tin thanh toán)
   @Get(':id')
   @ApiFindOneBuildingDoc()
-  async findOne(@Param('id') id: string): Promise<Building> {
-    return this.buildingsService.findById(id);
+  async findOne(@Param('id') id: string): Promise<PublicBuildingResponseDto> {
+    return this.buildingsService.findPublicById(id);
   }
 
   // Khởi tạo Tòa Nhà đối tác mới (Dành riêng cho Quản trị viên cấp cao System Admin)

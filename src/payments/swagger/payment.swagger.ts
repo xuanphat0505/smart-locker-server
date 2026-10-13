@@ -1,5 +1,6 @@
 import { applyDecorators } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { ResidentPricingResponseDto } from '../dto/payment.dto';
 
 // Tài liệu Swagger cho endpoint kiểm tra phí quá hạn của bưu kiện
 export function ApiCheckFeeDoc() {
@@ -176,6 +177,38 @@ export function ApiCreateSubscriptionIntentDoc() {
     ApiResponse({
       status: 404,
       description: 'Không tìm thấy tòa nhà hoặc người dùng',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint cư dân xem biểu phí lưu kho của tòa nhà mình
+export function ApiGetResidentPricingDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Cư dân xem biểu phí lưu kho của tòa nhà mình',
+      description:
+        'Trả về biểu phí 4 chặng (mốc T1/T2/T3, phụ thu, trần phí) kèm bảng phí từng chặng đã tính sẵn cho gói tháng và khách lẻ. Tòa nhà lấy từ JWT, không chứa thông tin tài khoản ngân hàng',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Lấy biểu phí thành công',
+      type: ResidentPricingResponseDto,
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Tài khoản chưa được liên kết với Tòa nhà nào',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Không có quyền truy cập (Chỉ dành cho Cư dân)',
+    }),
+    ApiResponse({
+      status: 404,
+      description: 'Không tìm thấy thông tin tòa nhà',
     }),
   );
 }

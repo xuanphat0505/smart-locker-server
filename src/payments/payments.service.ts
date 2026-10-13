@@ -41,6 +41,10 @@ import {
   generateOrderCode,
 } from './utils/sepay.util';
 import { generateVietQrPayload } from './utils/vietqr.util';
+import {
+  DEFAULT_PRICING_POLICY,
+  buildPricingTiers,
+} from './utils/pricing-policy.util';
 import { MqttService } from '../mqtt/mqtt.service';
 
 @Injectable()
@@ -71,16 +75,7 @@ export class PaymentsService {
     building: Building,
     hasActiveSubscription: boolean,
   ) {
-    const policy = building?.pricingPolicy ?? {
-      monthlySubscriptionFee: 30000,
-      perUseFee: 5000,
-      t1Hours: 12,
-      t2Hours: 24,
-      t3Hours: 48,
-      feeX1: 10000,
-      feeX2: 15000,
-      maxOverdueFeeCap: 25000,
-    };
+    const policy = building?.pricingPolicy ?? DEFAULT_PRICING_POLICY;
 
     const now = Date.now();
     const droppedOffAtMs = new Date(pkg.droppedOffAt).getTime();
@@ -105,6 +100,7 @@ export class PaymentsService {
         paidUntil: pkg.paidUntil,
         totalFeePaid: pkg.totalFeePaid || 0,
         buildingName: building?.name,
+        policy,
       };
     }
 
@@ -122,6 +118,7 @@ export class PaymentsService {
         paidUntil: new Date(droppedOffAtMs + policy.t1Hours * 3600 * 1000),
         totalFeePaid: pkg.totalFeePaid || 0,
         buildingName: building?.name,
+        policy,
       };
     }
 
@@ -140,6 +137,7 @@ export class PaymentsService {
         paidUntil: pkg.paidUntil,
         totalFeePaid: pkg.totalFeePaid || 0,
         buildingName: building?.name,
+        policy,
       };
     }
 
@@ -161,6 +159,38 @@ export class PaymentsService {
       paidUntil: pkg.paidUntil,
       totalFeePaid: pkg.totalFeePaid || 0,
       buildingName: building?.name,
+      policy,
+    };
+  }
+
+  // Lấy biểu phí lưu kho của tòa nhà để cư dân xem, không kèm thông tin tài khoản ngân hàng
+  async getResidentPricing(buildingId?: string) {
+    if (!buildingId || !Types.ObjectId.isValid(buildingId)) {
+      throw new BadRequestException(
+        'Tài khoản chưa được liên kết với Tòa nhà nào',
+      );
+    }
+
+    const building = await this.buildingModel
+      .findById(buildingId)
+      .select('name pricingPolicy')
+      .lean()
+      .exec();
+
+    if (!building) {
+      throw new NotFoundException('Không tìm thấy thông tin tòa nhà');
+    }
+
+    const policy = {
+      ...DEFAULT_PRICING_POLICY,
+      ...(building.pricingPolicy ?? {}),
+    };
+
+    return {
+      buildingId: String(building._id),
+      buildingName: building.name,
+      policy,
+      tiers: buildPricingTiers(policy),
     };
   }
 

@@ -1,5 +1,6 @@
 import { applyDecorators } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
+import { PublicBuildingResponseDto } from '../dto/public-building.dto';
 
 // Tài liệu Swagger cho endpoint lấy danh sách tất cả Tòa Nhà
 export function ApiFindAllBuildingsDoc() {
@@ -12,6 +13,8 @@ export function ApiFindAllBuildingsDoc() {
     ApiResponse({
       status: 200,
       description: 'Lấy danh sách tòa nhà thành công',
+      type: PublicBuildingResponseDto,
+      isArray: true,
     }),
   );
 }
@@ -50,6 +53,8 @@ export function ApiFindNearbyBuildingsDoc() {
       status: 200,
       description:
         'Tìm kiếm tòa nhà lân cận thành công (đã sắp xếp từ gần đến xa)',
+      type: PublicBuildingResponseDto,
+      isArray: true,
     }),
     ApiResponse({
       status: 400,
@@ -64,11 +69,16 @@ export function ApiFindOneBuildingDoc() {
     ApiOperation({
       summary: 'Lấy thông tin chi tiết một Tòa Nhà',
       description:
-        'Truy vấn cơ sở dữ liệu lấy thông tin chi tiết đầy đủ của một Tòa Nhà theo mã ObjectId',
+        'API công khai lấy thông tin chi tiết của một Tòa Nhà theo mã ObjectId (không bao gồm tài khoản ngân hàng và biểu phí)',
     }),
     ApiResponse({
       status: 200,
       description: 'Tìm thấy thông tin tòa nhà',
+      type: PublicBuildingResponseDto,
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Mã tòa nhà không hợp lệ',
     }),
     ApiResponse({
       status: 404,
