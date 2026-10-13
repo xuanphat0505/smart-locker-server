@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   UnauthorizedException,
   Logger,
 } from '@nestjs/common';
@@ -10,7 +11,6 @@ import { Model, Types } from 'mongoose';
 import * as crypto from 'crypto';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Package, ShipperSession } from './schemas';
-import { LockerLog } from '../lockers/schemas/locker-log.schema';
 import { Locker } from '../lockers/schemas/locker.schema';
 import { Box } from '../lockers/schemas/box.schema';
 import { User } from '../users/schemas/user.schema';
@@ -32,6 +32,8 @@ import { MqttService } from '../mqtt/mqtt.service';
 import { FaceVerificationService } from '../ai/services/face-verification.service';
 import { PaymentsService } from '../payments/payments.service';
 import { PaymentType } from '../payments/enums/payment.enums';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import { generateUniquePinCode } from './utils/pin-code.util';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
 
 @Injectable()
@@ -42,8 +44,6 @@ export class PackagesService {
     @InjectModel(Package.name) private readonly packageModel: Model<Package>,
     @InjectModel(ShipperSession.name)
     private readonly shipperSessionModel: Model<ShipperSession>,
-    @InjectModel(LockerLog.name)
-    private readonly lockerLogModel: Model<LockerLog>,
     @InjectModel(Locker.name) private readonly lockerModel: Model<Locker>,
     @InjectModel(Box.name) private readonly boxModel: Model<Box>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
@@ -51,6 +51,7 @@ export class PackagesService {
     private readonly mqttService: MqttService,
     private readonly faceVerificationService: FaceVerificationService,
     private readonly paymentsService: PaymentsService,
+    private readonly activityLogsService: ActivityLogsService,
   ) {}
 
   // Tài xế giao bưu kiện vào ngăn tủ và sinh mã OTP mở tủ cho cư dân
@@ -115,21 +116,10 @@ export class PackagesService {
       );
     }
 
-    let pinCode = '';
-    let isUnique = false;
-    let attempts = 0;
-    while (!isUnique && attempts < 10) {
-      attempts++;
-      pinCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const existingWithPin = await this.packageModel.findOne({
-        lockerId: locker._id,
-        pinCode,
-        status: PackageStatus.WAITING_FOR_PICKUP,
-      });
-      if (!existingWithPin) {
-        isUnique = true;
-      }
-    }
+    const pinCode = await generateUniquePinCode(
+      this.packageModel,
+      locker._id,
+    );
 
     const qrCodeToken = crypto.randomBytes(16).toString('hex');
     const droppedOffAt = new Date();
@@ -198,13 +188,18 @@ export class PackagesService {
     box.hasItem = true;
     await box.save();
 
-    await this.lockerLogModel.create({
-      lockerId: locker._id,
+    await this.activityLogsService.recordLockerAction({
+      locker,
       boxNumber: dto.boxNumber,
       packageId: newPackage._id,
       action: LockerAction.DROP_OFF,
       performedBy: normalizedShipperPhone,
       status: 'SUCCESS',
+      actor: {
+        name: dto.shipperName?.trim() || normalizedShipperPhone,
+        phone: normalizedShipperPhone,
+        role: Role.SHIPPER,
+      },
       metadata: {
         carrierName: dto.carrierName,
         trackingNumber: dto.trackingNumber,
@@ -467,6 +462,8 @@ export class PackagesService {
         qrCodeToken: pkg.qrCodeToken,
         status: pkg.status,
         carrierName: pkg.carrierName,
+        shipperName: pkg.shipperName,
+        shipperPhone: pkg.shipperPhone,
         droppedOffAt: pkg.droppedOffAt,
         expiredAt: pkg.expiredAt,
         pickedUpAt: pkg.pickedUpAt,
@@ -491,7 +488,7 @@ export class PackagesService {
     }
 
     if (String(pkg.residentId) !== residentId) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         'Bạn không có quyền xem kiện hàng của người khác',
       );
     }
@@ -652,8 +649,8 @@ export class PackagesService {
     pkg.pickedUpAt = new Date();
     await pkg.save();
 
-    await this.lockerLogModel.create({
-      lockerId: locker._id,
+    await this.activityLogsService.recordLockerAction({
+      locker,
       boxNumber: pkg.boxNumber,
       packageId: pkg._id,
       action: dto.qrProofToken
@@ -661,6 +658,12 @@ export class PackagesService {
         : LockerAction.PICKUP_OTP,
       performedBy: pkg.receiverPhone,
       status: 'SUCCESS',
+      actor: {
+        userId: pkg.residentId,
+        name: pkg.receiverName,
+        phone: pkg.receiverPhone,
+        role: Role.RESIDENT,
+      },
       metadata: dto.qrProofToken
         ? { verificationMethod: 'DYNAMIC_QR' }
         : undefined,
@@ -782,13 +785,19 @@ export class PackagesService {
     pkg.pickedUpAt = new Date();
     await pkg.save();
 
-    await this.lockerLogModel.create({
-      lockerId: locker._id,
+    await this.activityLogsService.recordLockerAction({
+      locker,
       boxNumber: pkg.boxNumber,
       packageId: pkg._id,
       action: LockerAction.PICKUP_QR,
       performedBy: pkg.receiverPhone,
       status: 'SUCCESS',
+      actor: {
+        userId: pkg.residentId,
+        name: pkg.receiverName,
+        phone: pkg.receiverPhone,
+        role: Role.RESIDENT,
+      },
     });
 
     // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT

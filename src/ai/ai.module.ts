@@ -9,12 +9,9 @@ import { Package, PackageSchema } from '../packages/schemas/package.schema';
 import { Locker, LockerSchema } from '../lockers/schemas/locker.schema';
 import { Box, BoxSchema } from '../lockers/schemas/box.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
-import {
-  LockerLog,
-  LockerLogSchema,
-} from '../lockers/schemas/locker-log.schema';
 import { MqttModule } from '../mqtt/mqtt.module';
 import { PaymentsModule } from '../payments/payments.module';
+import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
 
 @Module({
   imports: [
@@ -23,10 +20,10 @@ import { PaymentsModule } from '../payments/payments.module';
       { name: Locker.name, schema: LockerSchema },
       { name: Box.name, schema: BoxSchema },
       { name: User.name, schema: UserSchema },
-      { name: LockerLog.name, schema: LockerLogSchema },
     ]),
     MqttModule,
     PaymentsModule,
+    ActivityLogsModule,
   ],
   controllers: [AiController],
   providers: [

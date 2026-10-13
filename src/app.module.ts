@@ -18,6 +18,7 @@ import { UploadModule } from './upload/upload.module';
 import { MqttModule } from './mqtt/mqtt.module';
 import { AiModule } from './ai/ai.module';
 import { PaymentsModule } from './payments/payments.module';
+import { ActivityLogsModule } from './activity-logs/activity-logs.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { PaymentsModule } from './payments/payments.module';
     UploadModule,
     MqttModule,
     AiModule,
+    ActivityLogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
