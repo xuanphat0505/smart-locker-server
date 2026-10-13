@@ -55,8 +55,11 @@ export class PaymentsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiCheckFeeDoc()
-  async checkFee(@Param('packageId') packageId: string) {
-    return this.paymentsService.checkFee(packageId);
+  async checkFee(
+    @Param('packageId') packageId: string,
+    @Request() req: { user: AuthenticatedUser },
+  ) {
+    return this.paymentsService.checkFeeForUser(packageId, req.user);
   }
 
   // Khởi tạo phiên giao dịch thanh toán SePay nộp phí quá hạn hoặc gia hạn lưu kho
@@ -96,16 +99,29 @@ export class PaymentsController {
 
   // Tra cứu nhanh trạng thái giao dịch thanh toán phục vụ Client Auto-Polling
   @Get('status/:orderCode')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
   @ApiGetPaymentStatusDoc()
-  async getPaymentStatus(@Param('orderCode', ParseIntPipe) orderCode: number) {
-    return this.paymentsService.getPaymentStatus(orderCode);
+  async getPaymentStatus(
+    @Param('orderCode', ParseIntPipe) orderCode: number,
+    @Request() req: { user: AuthenticatedUser },
+  ) {
+    return this.paymentsService.getPaymentStatus(orderCode, req.user);
   }
 
   // ESP32 gọi sau khi polling xác nhận thanh toán thành công - kích hoạt mở chốt điện và hoàn tất nhận hàng
   @Post('kiosk-pickup')
   @ApiKioskPickupDoc()
-  async kioskPickup(@Body() dto: SandboxConfirmPaymentDto) {
-    return this.paymentsService.completeKioskPickup(dto.orderCode);
+  async kioskPickup(
+    @Body() dto: SandboxConfirmPaymentDto,
+    @Headers('x-api-key') apiKey?: string,
+    @Headers('x-locker-code') lockerCode?: string,
+  ) {
+    return this.paymentsService.completeKioskPickupForDevice(
+      dto.orderCode,
+      apiKey,
+      lockerCode,
+    );
   }
 
   // Lấy danh sách lịch sử các giao dịch thanh toán của cư dân đang đăng nhập
@@ -120,10 +136,13 @@ export class PaymentsController {
 
   // Tra cứu chi tiết trạng thái giao dịch thanh toán theo mã orderCode duy nhất
   @Get('order/:orderCode')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
   @ApiGetPaymentByOrderCodeDoc()
   async getPaymentByOrderCode(
     @Param('orderCode', ParseIntPipe) orderCode: number,
+    @Request() req: { user: AuthenticatedUser },
   ) {
-    return this.paymentsService.getPaymentByOrderCode(orderCode);
+    return this.paymentsService.getPaymentByOrderCode(orderCode, req.user);
   }
 }
