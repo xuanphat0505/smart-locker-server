@@ -4,6 +4,7 @@ import {
   Post,
   Param,
   Body,
+  Query,
   Headers,
   UseGuards,
   Request,
@@ -13,6 +14,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { PackagesService } from './packages.service';
+import { PackagesAdminService } from './packages-admin.service';
 import {
   DropOffPackageDto,
   PickupOtpDto,
@@ -22,6 +24,10 @@ import {
   VerifyShipperOtpDto,
   VerifyFirebaseTokenDto,
 } from './dto';
+import {
+  QueryAdminPackagesDto,
+  ReturnPackageDto,
+} from './dto/admin-package.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { PickupAuthGuard } from '../auth/guards/pickup-auth.guard';
@@ -39,12 +45,18 @@ import {
   ApiSendShipperOtpDoc,
   ApiVerifyShipperOtpDoc,
   ApiVerifyFirebaseTokenDoc,
+  ApiListAdminPackagesDoc,
+  ApiReturnPackageDoc,
+  ApiResendOtpDoc,
 } from './swagger/package.swagger';
 
 @ApiTags('Packages')
 @Controller('packages')
 export class PackagesController {
-  constructor(private readonly packagesService: PackagesService) {}
+  constructor(
+    private readonly packagesService: PackagesService,
+    private readonly packagesAdminService: PackagesAdminService,
+  ) {}
 
   // Gửi mã xác thực OTP 6 số tới số điện thoại của tài xế giao hàng
   @Post('shipper/send-otp')
@@ -113,6 +125,19 @@ export class PackagesController {
     return this.packagesService.pickupWithFace(finalDto, file);
   }
 
+  // Quản trị viên xem danh sách bưu kiện theo phạm vi tòa nhà (không chứa OTP và mã QR)
+  @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
+  @ApiBearerAuth('JWT-auth')
+  @ApiListAdminPackagesDoc()
+  async findAllForAdmin(
+    @Query() query: QueryAdminPackagesDto,
+    @Request() req: { user: AuthenticatedUser },
+  ) {
+    return this.packagesAdminService.findAll(req.user, query);
+  }
+
   // Cư dân xem danh sách toàn bộ các bưu kiện của chính mình
   @Get('my-packages')
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -139,13 +164,44 @@ export class PackagesController {
   // Xem thông tin chi tiết một bưu kiện cụ thể
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.RESIDENT, Role.BUILDING_ADMIN)
+  @Roles(Role.RESIDENT, Role.BUILDING_ADMIN, Role.SYSTEM_ADMIN)
   @ApiBearerAuth('JWT-auth')
   @ApiGetPackageByIdDoc()
   async getPackageById(
     @Param('id') id: string,
     @Request() req: { user: AuthenticatedUser },
   ) {
-    return this.packagesService.getPackageById(id, req.user.userId);
+    // Cư dân chỉ xem đơn của mình; quản trị viên xem theo phạm vi tòa nhà và không nhận OTP
+    if (req.user.role === Role.RESIDENT) {
+      return this.packagesService.getPackageById(id, req.user.userId);
+    }
+    return this.packagesAdminService.findOne(id, req.user);
+  }
+
+  // Quản trị viên thu hồi bưu kiện quá hạn về kho Ban Quản Lý và mở cửa ngăn tủ
+  @Post(':id/return')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
+  @ApiBearerAuth('JWT-auth')
+  @ApiReturnPackageDoc()
+  async returnPackage(
+    @Param('id') id: string,
+    @Body() dto: ReturnPackageDto,
+    @Request() req: { user: AuthenticatedUser },
+  ) {
+    return this.packagesAdminService.returnToStorage(id, req.user, dto);
+  }
+
+  // Quản trị viên cấp lại mã OTP cho bưu kiện, mã mới chỉ được gửi cho cư dân
+  @Post(':id/resend-otp')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
+  @ApiBearerAuth('JWT-auth')
+  @ApiResendOtpDoc()
+  async resendOtp(
+    @Param('id') id: string,
+    @Request() req: { user: AuthenticatedUser },
+  ) {
+    return this.packagesAdminService.resendOtp(id, req.user);
   }
 }

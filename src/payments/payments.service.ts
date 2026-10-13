@@ -13,7 +13,6 @@ import { Package } from '../packages/schemas/package.schema';
 import { Building } from '../buildings/schemas/building.schema';
 import { Locker } from '../lockers/schemas/locker.schema';
 import { Box } from '../lockers/schemas/box.schema';
-import { LockerLog } from '../lockers/schemas/locker-log.schema';
 import { User } from '../users/schemas/user.schema';
 import { PackageStatus } from '../packages/enums/package.enums';
 import {
@@ -47,6 +46,7 @@ import {
   buildPricingTiers,
 } from './utils/pricing-policy.util';
 import { MqttService } from '../mqtt/mqtt.service';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { Role } from '../auth/enums/role.enum';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 
@@ -65,11 +65,10 @@ export class PaymentsService {
     private readonly lockerModel: Model<Locker>,
     @InjectModel(Box.name)
     private readonly boxModel: Model<Box>,
-    @InjectModel(LockerLog.name)
-    private readonly lockerLogModel: Model<LockerLog>,
     @InjectModel(User.name)
     private readonly userModel: Model<User>,
     private readonly mqttService: MqttService,
+    private readonly activityLogsService: ActivityLogsService,
   ) {}
 
   // Tính phí 4 chặng bậc thang theo thời lượng lưu kho kể từ droppedOffAt
@@ -865,13 +864,23 @@ export class PaymentsService {
     pkg.totalFeePaid = (pkg.totalFeePaid || 0) + payment.amount;
     await pkg.save();
 
-    await this.lockerLogModel.create({
-      lockerId,
+    await this.activityLogsService.recordLockerAction({
+      locker: locker ?? {
+        _id: lockerId,
+        code: String(lockerId),
+        buildingId: payment.buildingId,
+      },
       boxNumber,
       packageId: payment.packageId,
       action: LockerAction.PICKUP_OTP,
       performedBy: pkg.receiverPhone || 'RESIDENT',
       status: 'SUCCESS',
+      actor: {
+        userId: pkg.residentId,
+        name: pkg.receiverName,
+        phone: pkg.receiverPhone,
+        role: Role.RESIDENT,
+      },
       metadata: {
         note: `Cư dân nộp phí quá hạn tại Kiosk #${orderCode} và mở tủ thành công`,
         orderCode,

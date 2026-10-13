@@ -253,3 +253,57 @@ export function ApiVerifyFirebaseTokenDoc() {
     }),
   );
 }
+
+// Tài liệu Swagger cho endpoint quản trị viên liệt kê bưu kiện
+export function ApiListAdminPackagesDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Danh sách bưu kiện cho quản trị viên',
+      description:
+        'System Admin xem toàn hệ thống (lọc theo buildingId); Building Admin chỉ xem bưu kiện của tòa mình. Không trả pinCode, qrCodeToken, failedAttempts, lockedUntil. Trả về { data, total, page, limit }',
+    }),
+    ApiResponse({ status: 200, description: 'Lấy danh sách thành công' }),
+    ApiResponse({ status: 400, description: 'Tham số lọc không hợp lệ' }),
+    ApiResponse({ status: 401, description: 'Chưa đăng nhập' }),
+    ApiResponse({ status: 403, description: 'Không có quyền truy cập' }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint thu hồi bưu kiện về kho Ban Quản Lý
+export function ApiReturnPackageDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Thu hồi bưu kiện về kho Ban Quản Lý',
+      description:
+        'Chỉ áp dụng cho bưu kiện đang chờ nhận hoặc quá hạn. Đổi trạng thái sang RETURNED, giải phóng ngăn và gửi lệnh mở cửa để lấy hàng ra. Ghi nhật ký thao tác',
+    }),
+    ApiParam({ name: 'id', description: 'Mã bưu kiện' }),
+    ApiResponse({ status: 201, description: 'Thu hồi thành công' }),
+    ApiResponse({ status: 403, description: 'Bưu kiện thuộc tòa nhà khác' }),
+    ApiResponse({ status: 404, description: 'Không tìm thấy bưu kiện' }),
+    ApiResponse({
+      status: 409,
+      description: 'Bưu kiện không còn ở trạng thái có thể thu hồi',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint cấp lại mã OTP của bưu kiện
+export function ApiResendOtpDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Cấp lại mã OTP cho bưu kiện',
+      description:
+        'Sinh mã OTP mới (vô hiệu mã cũ, đặt lại số lần nhập sai) và gửi cho cư dân qua thông báo. Mã không được trả về cho quản trị viên. Mỗi bưu kiện chỉ cấp lại một lần mỗi 60 giây',
+    }),
+    ApiParam({ name: 'id', description: 'Mã bưu kiện' }),
+    ApiResponse({ status: 201, description: 'Cấp lại OTP thành công' }),
+    ApiResponse({ status: 403, description: 'Bưu kiện thuộc tòa nhà khác' }),
+    ApiResponse({ status: 404, description: 'Không tìm thấy bưu kiện' }),
+    ApiResponse({
+      status: 409,
+      description: 'Bưu kiện không còn nằm trong ngăn tủ',
+    }),
+    ApiResponse({ status: 429, description: 'Cấp lại OTP quá thường xuyên' }),
+  );
+}

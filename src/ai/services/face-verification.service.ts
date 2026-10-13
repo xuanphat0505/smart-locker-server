@@ -14,7 +14,6 @@ import { Package } from '../../packages/schemas/package.schema';
 import { Locker } from '../../lockers/schemas/locker.schema';
 import { Box } from '../../lockers/schemas/box.schema';
 import { User } from '../../users/schemas/user.schema';
-import { LockerLog } from '../../lockers/schemas/locker-log.schema';
 import { PackageStatus } from '../../packages/enums/package.enums';
 import {
   BoxStatus,
@@ -27,6 +26,8 @@ import { FaceDetectorService } from './face-detector.service';
 import { MqttService } from '../../mqtt/mqtt.service';
 import { PaymentsService } from '../../payments/payments.service';
 import { PaymentType } from '../../payments/enums/payment.enums';
+import { Role } from '../../auth/enums/role.enum';
+import { ActivityLogsService } from '../../activity-logs/activity-logs.service';
 import {
   VerifyFaceHardwareResult,
   EnrollFaceResult,
@@ -51,13 +52,12 @@ export class FaceVerificationService {
     private readonly boxModel: Model<Box>,
     @InjectModel(User.name)
     private readonly userModel: Model<User>,
-    @InjectModel(LockerLog.name)
-    private readonly lockerLogModel: Model<LockerLog>,
     private readonly antiSpoofingService: AntiSpoofingService,
     private readonly faceRecognitionService: FaceRecognitionService,
     private readonly faceDetectorService: FaceDetectorService,
     private readonly mqttService: MqttService,
     private readonly paymentsService: PaymentsService,
+    private readonly activityLogsService: ActivityLogsService,
   ) { }
 
   // Tính toán vector trung bình và chuẩn hóa chuẩn L2 từ danh sách các vector đặc trưng khuôn mặt đa góc
@@ -376,13 +376,19 @@ export class FaceVerificationService {
     await matchedPkg.save();
 
     // Ghi nhat ky su kien mo tu bang Face ID
-    await this.lockerLogModel.create({
-      lockerId: locker._id,
+    await this.activityLogsService.recordLockerAction({
+      locker,
       boxNumber: matchedPkg.boxNumber,
       packageId: matchedPkg._id,
       action: LockerAction.PICKUP_FACE_ID,
       performedBy: matchedResident.phone || matchedPkg.receiverPhone,
       status: 'SUCCESS',
+      actor: {
+        userId: matchedResident._id,
+        name: matchedResident.name,
+        phone: matchedResident.phone,
+        role: Role.RESIDENT,
+      },
       metadata: {
         matchScore: bestMatch.score,
         livenessScore: livenessResult.livenessScore,

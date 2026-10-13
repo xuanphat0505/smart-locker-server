@@ -140,6 +140,10 @@ export class Package extends Document {
   @Prop({ required: false })
   paidUntil?: Date;
 
+  // Lần gần nhất Ban Quản Lý cấp lại mã OTP, dùng để chặn cấp lại liên tục
+  @Prop({ required: false })
+  otpReissuedAt?: Date;
+
   // Ghi chú đính kèm của đơn hàng
   @Prop({ required: false, trim: true })
   note?: string;
@@ -149,6 +153,9 @@ export const PackageSchema = SchemaFactory.createForClass(Package);
 
 // Đánh chỉ mục phục vụ tìm kiếm nhanh khi cư dân bấm OTP tại màn hình trạm tủ
 PackageSchema.index({ lockerId: 1, pinCode: 1, status: 1 });
+
+// Đánh chỉ mục phục vụ danh sách bưu kiện của trang quản trị theo tòa nhà và trạng thái (mới nhất trước)
+PackageSchema.index({ buildingId: 1, status: 1, droppedOffAt: -1 });
 
 // Đánh chỉ mục tối ưu truy vấn danh sách bưu kiện của từng cư dân
 PackageSchema.index({ residentId: 1, status: 1 });

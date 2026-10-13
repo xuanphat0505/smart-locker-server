@@ -451,4 +451,70 @@ export class NotificationsService {
       );
     }
   }
+
+  // Báo cho cư dân biết Ban Quản Lý vừa cấp lại mã OTP nhận hàng của một bưu kiện
+  async notifyPackageOtpReissued(
+    residentId: string,
+    buildingId: string,
+    packageInfo: {
+      id: string;
+      trackingNumber: string;
+      boxNumber: number;
+      lockerCode: string;
+      pinCode: string;
+    },
+  ): Promise<void> {
+    try {
+      const actionUrl = `/locker/pickup?id=${packageInfo.id}&otp=${packageInfo.pinCode}&locker=${packageInfo.boxNumber}`;
+
+      await this.createNotification({
+        recipientId: residentId,
+        buildingId,
+        title: 'Mã OTP nhận hàng đã được cấp lại',
+        message: `Mã OTP mới cho đơn ${packageInfo.trackingNumber} tại Ngăn #${packageInfo.boxNumber}: ${packageInfo.pinCode}. Mã cũ không còn hiệu lực.`,
+        category: NotificationCategory.PACKAGE,
+        type: NotificationType.PACKAGE_OTP_REISSUED,
+        priority: NotificationPriority.HIGH,
+        actionUrl,
+        metadata: {
+          packageId: new Types.ObjectId(packageInfo.id),
+          trackingNumber: packageInfo.trackingNumber,
+          boxNumber: packageInfo.boxNumber,
+          lockerCode: packageInfo.lockerCode,
+        },
+      });
+
+      const resident = await this.userModel
+        .findById(residentId)
+        .select('devicePushToken')
+        .lean();
+
+      if (resident?.devicePushToken) {
+        this.pushNotificationsService
+          .sendPushNotification({
+            to: resident.devicePushToken,
+            title: 'Mã OTP nhận hàng đã được cấp lại',
+            body: `Mã OTP mới cho đơn ${packageInfo.trackingNumber}: ${packageInfo.pinCode}`,
+            data: {
+              type: 'PACKAGE_OTP_REISSUED',
+              packageId: packageInfo.id,
+              boxNumber: packageInfo.boxNumber,
+              lockerCode: packageInfo.lockerCode,
+              actionUrl,
+            },
+            priority: 'high',
+            channelId: 'package_arrived',
+          })
+          .catch((err) => {
+            this.logger.error(
+              `Lỗi khi đẩy thông báo cấp lại OTP tới thiết bị: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+      }
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi điều phối thông báo cấp lại OTP: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 }

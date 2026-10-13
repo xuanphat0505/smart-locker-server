@@ -5,12 +5,9 @@ import { Package, PackageSchema } from '../packages/schemas/package.schema';
 import { Building, BuildingSchema } from '../buildings/schemas/building.schema';
 import { Locker, LockerSchema } from '../lockers/schemas/locker.schema';
 import { Box, BoxSchema } from '../lockers/schemas/box.schema';
-import {
-  LockerLog,
-  LockerLogSchema,
-} from '../lockers/schemas/locker-log.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { MqttModule } from '../mqtt/mqtt.module';
+import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 
@@ -22,10 +19,10 @@ import { PaymentsService } from './payments.service';
       { name: Building.name, schema: BuildingSchema },
       { name: Locker.name, schema: LockerSchema },
       { name: Box.name, schema: BoxSchema },
-      { name: LockerLog.name, schema: LockerLogSchema },
       { name: User.name, schema: UserSchema },
     ]),
     MqttModule,
+    ActivityLogsModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService],
