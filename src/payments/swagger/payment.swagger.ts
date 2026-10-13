@@ -8,7 +8,7 @@ export function ApiCheckFeeDoc() {
     ApiOperation({
       summary: 'Kiểm tra phí quá hạn và trạng thái gia hạn của bưu kiện',
       description:
-        'Tính toán số tiền quá hạn dựa trên chính sách biểu phí lũy thừa của tòa nhà và tổng số tiền đã nộp trước đó',
+        'Tính toán số tiền quá hạn dựa trên chính sách biểu phí lũy thừa của tòa nhà và tổng số tiền đã nộp trước đó. Chỉ chủ đơn, Ban Quản Lý cùng tòa nhà hoặc System Admin được xem (403 với người khác)',
     }),
     ApiParam({
       name: 'packageId',
@@ -74,7 +74,7 @@ export function ApiGetPaymentStatusDoc() {
   return applyDecorators(
     ApiOperation({
       summary:
-        'Tra cứu trạng thái thanh toán phục vụ Auto-Polling từ Mobile App hoặc ESP32',
+        'Tra cứu trạng thái thanh toán phục vụ Auto-Polling từ Mobile App (yêu cầu JWT của chủ giao dịch, Ban Quản Lý cùng tòa nhà hoặc System Admin; trả 403 với người khác)',
       description:
         'Endpoint phản hồi nhanh và gọn nhẹ giúp Client định kỳ 2 giây kiểm tra trạng thái PAID để tự động đóng modal hoặc bung cửa tủ',
     }),
@@ -100,11 +100,19 @@ export function ApiKioskPickupDoc() {
     ApiOperation({
       summary: 'Hoàn tất nhận hàng tại Kiosk sau khi thanh toán thành công',
       description:
-        'ESP32 gọi endpoint này sau khi xác nhận thanh toán PAID. Hệ thống phát lệnh MQTT mở chốt điện 12V và cập nhật trạng thái tủ/đơn hàng.',
+        'ESP32 gọi endpoint này sau khi xác nhận thanh toán PAID, bắt buộc gửi x-api-key và x-locker-code của trạm. Chỉ áp dụng cho giao dịch Kiosk thuộc đúng trạm tủ của thiết bị. Hệ thống phát lệnh MQTT mở chốt điện 12V và cập nhật trạng thái tủ/đơn hàng.',
     }),
     ApiResponse({
       status: 200,
       description: 'Mở tủ thành công',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Thiếu hoặc sai x-api-key / mã trạm tủ của thiết bị',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Giao dịch không phải phiên Kiosk thuộc trạm tủ của thiết bị',
     }),
     ApiResponse({
       status: 400,
@@ -138,7 +146,7 @@ export function ApiGetPaymentByOrderCodeDoc() {
     ApiOperation({
       summary: 'Tra cứu trạng thái và thông tin giao dịch theo mã orderCode',
       description:
-        'Dùng cho màn hình Kiosk hoặc ứng dụng di động kiểm tra tiến độ thanh toán của đơn hàng',
+        'Yêu cầu JWT của chủ giao dịch, Ban Quản Lý cùng tòa nhà hoặc System Admin; trả 403 với người khác. Phản hồi gồm thông tin người nhận và tài khoản thụ hưởng nên không được công khai',
     }),
     ApiParam({
       name: 'orderCode',

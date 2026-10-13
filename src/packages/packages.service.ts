@@ -589,11 +589,14 @@ export class PackagesService {
     // Kiểm tra phí dịch vụ và tính hợp lệ của thời hạn nhận hàng
     const feeInfo = await this.paymentsService.checkFee(String(pkg._id));
     if (feeInfo.feeDue > 0) {
-      const intent = await this.paymentsService.createPaymentIntent({
-        packageId: String(pkg._id),
-        paymentType: PaymentType.OVERDUE_PICKUP,
-        isKiosk,
-      });
+      const intent = await this.paymentsService.createPaymentIntent(
+        {
+          packageId: String(pkg._id),
+          paymentType: PaymentType.OVERDUE_PICKUP,
+        },
+        undefined,
+        { isKiosk },
+      );
 
       const paymentMessage = feeInfo.isOverdue
         ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng nộp phí để mở tủ.'
@@ -716,11 +719,14 @@ export class PackagesService {
     // Kiểm tra phí dịch vụ và tính hợp lệ của thời hạn nhận hàng
     const feeInfo = await this.paymentsService.checkFee(String(pkg._id));
     if (feeInfo.feeDue > 0) {
-      const intent = await this.paymentsService.createPaymentIntent({
-        packageId: String(pkg._id),
-        paymentType: PaymentType.OVERDUE_PICKUP,
-        isKiosk,
-      });
+      const intent = await this.paymentsService.createPaymentIntent(
+        {
+          packageId: String(pkg._id),
+          paymentType: PaymentType.OVERDUE_PICKUP,
+        },
+        undefined,
+        { isKiosk },
+      );
 
       const paymentMessage = feeInfo.isOverdue
         ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng nộp phí để mở tủ.'

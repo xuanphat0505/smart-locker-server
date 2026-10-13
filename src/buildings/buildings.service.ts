@@ -259,8 +259,10 @@ export class BuildingsService {
       );
     }
 
-    // Chặn Ban Quản Lý tự ý thay đổi mã định danh hoặc trạng thái kích hoạt của tòa nhà
-    const { ...safeDto } = dto;
+    // Loại bỏ mã định danh và trạng thái kích hoạt vì chỉ System Admin mới được thay đổi hai trường này
+    const safeDto: UpdateBuildingDto = { ...dto };
+    delete safeDto.code;
+    delete safeDto.status;
     return this.update(buildingId, safeDto);
   }
 

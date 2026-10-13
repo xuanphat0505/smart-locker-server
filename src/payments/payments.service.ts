@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -46,6 +47,8 @@ import {
   buildPricingTiers,
 } from './utils/pricing-policy.util';
 import { MqttService } from '../mqtt/mqtt.service';
+import { Role } from '../auth/enums/role.enum';
+import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 
 @Injectable()
 export class PaymentsService {
@@ -194,6 +197,63 @@ export class PaymentsService {
     };
   }
 
+  // Chuyển giá trị ObjectId hoặc document đã populate về chuỗi mã định danh để so sánh quyền sở hữu
+  private toIdString(value: unknown): string {
+    if (value && typeof value === 'object' && '_id' in value) {
+      return String((value as { _id: unknown })._id);
+    }
+    return String(value);
+  }
+
+  // Chỉ cho phép chủ sở hữu, Ban Quản Lý cùng tòa nhà hoặc System Admin truy cập dữ liệu thanh toán
+  private assertResourceAccess(
+    user: AuthenticatedUser,
+    ownerId: unknown,
+    buildingId: unknown,
+  ) {
+    if (user.role === Role.SYSTEM_ADMIN) return;
+
+    if (
+      user.role === Role.BUILDING_ADMIN &&
+      user.buildingId &&
+      buildingId &&
+      this.toIdString(buildingId) === String(user.buildingId)
+    ) {
+      return;
+    }
+
+    if (
+      user.role === Role.RESIDENT &&
+      ownerId &&
+      this.toIdString(ownerId) === String(user.userId)
+    ) {
+      return;
+    }
+
+    throw new ForbiddenException(
+      'Bạn không có quyền truy cập dữ liệu thanh toán này',
+    );
+  }
+
+  // Kiểm tra phí của bưu kiện sau khi xác nhận người gọi là chủ đơn, Ban Quản Lý tòa nhà hoặc System Admin
+  async checkFeeForUser(packageId: string, user: AuthenticatedUser) {
+    if (!Types.ObjectId.isValid(packageId)) {
+      throw new BadRequestException('Mã bưu kiện không hợp lệ');
+    }
+
+    const pkg = await this.packageModel
+      .findById(packageId)
+      .select('residentId buildingId')
+      .lean();
+
+    if (!pkg) {
+      throw new NotFoundException('Không tìm thấy bưu kiện');
+    }
+
+    this.assertResourceAccess(user, pkg.residentId, pkg.buildingId);
+    return this.checkFee(packageId);
+  }
+
   // Kiểm tra phí dịch vụ và hạn nhận hàng của bưu kiện theo biểu phí 4 chặng
   async checkFee(packageId: string) {
     if (!Types.ObjectId.isValid(packageId)) {
@@ -221,7 +281,11 @@ export class PaymentsService {
   }
 
   // Khởi tạo phiên giao dịch thanh toán VietQR và sinh chuỗi dữ liệu phục vụ hiển thị
-  async createPaymentIntent(dto: CreatePaymentIntentDto, userId?: string) {
+  async createPaymentIntent(
+    dto: CreatePaymentIntentDto,
+    userId?: string,
+    options: { isKiosk?: boolean } = {},
+  ) {
     if (!Types.ObjectId.isValid(dto.packageId)) {
       throw new BadRequestException('Mã bưu kiện không hợp lệ');
     }
@@ -273,7 +337,8 @@ export class PaymentsService {
     ) {
       // Gia hạn thời gian chờ thanh toán thêm 15 phút tính từ thời điểm hiện tại
       const renewedExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-      const isKioskMode = dto.isKiosk ?? activePendingPayment.isKiosk ?? false;
+      const isKioskMode =
+        options.isKiosk ?? activePendingPayment.isKiosk ?? false;
 
       activePendingPayment.expiresAt = renewedExpiresAt;
       activePendingPayment.isKiosk = isKioskMode;
@@ -365,7 +430,7 @@ export class PaymentsService {
       lockerId: pkg.lockerId._id || pkg.lockerId,
       boxId: pkg.boxId,
       boxNumber: pkg.boxNumber,
-      isKiosk: dto.isKiosk ?? false,
+      isKiosk: options.isKiosk ?? false,
       paymentType: dto.paymentType || PaymentType.OVERDUE_PICKUP,
       paymentMethod: PaymentMethod.SEPAY,
       amount: feeInfo.feeDue,
@@ -713,6 +778,42 @@ export class PaymentsService {
     };
   }
 
+  // Xác thực thiết bị Kiosk bằng x-api-key và chỉ cho mở khi giao dịch là phiên Kiosk thuộc đúng trạm tủ của thiết bị
+  async completeKioskPickupForDevice(
+    orderCode: number,
+    apiKey?: string,
+    lockerCode?: string,
+  ) {
+    if (!apiKey || !lockerCode) {
+      throw new UnauthorizedException(
+        'Yêu cầu từ thiết bị cần có x-api-key và mã trạm tủ x-locker-code',
+      );
+    }
+
+    const locker = await this.lockerModel
+      .findOne({ code: String(lockerCode).trim().toUpperCase() })
+      .select('+apiKey');
+
+    if (!locker || locker.apiKey !== apiKey) {
+      throw new UnauthorizedException(
+        'Mã API Key của thiết bị không chính xác hoặc trạm tủ không tồn tại',
+      );
+    }
+
+    const payment = await this.paymentModel.findOne({ orderCode });
+    if (
+      !payment ||
+      !payment.isKiosk ||
+      this.toIdString(payment.lockerId) !== String(locker._id)
+    ) {
+      throw new ForbiddenException(
+        'Giao dịch này không thuộc phiên thanh toán tại trạm tủ của thiết bị',
+      );
+    }
+
+    return this.completeKioskPickup(orderCode);
+  }
+
   // Kích hoạt mở tủ sau khi cư dân đã quét và thanh toán thành công tại Kiosk - chỉ xử lý hành động cơ khí vật lý
   async completeKioskPickup(orderCode: number) {
     const payment = await this.paymentModel.findOne({
@@ -807,7 +908,7 @@ export class PaymentsService {
   }
 
   // Tra cứu chi tiết một giao dịch theo mã orderCode duy nhất
-  async getPaymentByOrderCode(orderCode: number) {
+  async getPaymentByOrderCode(orderCode: number, user: AuthenticatedUser) {
     const payment = await this.paymentModel
       .findOne({ orderCode })
       .populate(
@@ -823,6 +924,7 @@ export class PaymentsService {
       );
     }
 
+    this.assertResourceAccess(user, payment.userId, payment.buildingId);
     return payment;
   }
 
@@ -1050,13 +1152,15 @@ export class PaymentsService {
   }
 
   // Tra cứu nhanh trạng thái giao dịch phục vụ cơ chế Auto-Polling tự động từ Client
-  async getPaymentStatus(orderCode: number) {
+  async getPaymentStatus(orderCode: number, user: AuthenticatedUser) {
     const payment = await this.paymentModel.findOne({ orderCode });
     if (!payment) {
       throw new NotFoundException(
         `Không tìm thấy phiên giao dịch #${orderCode}`,
       );
     }
+
+    this.assertResourceAccess(user, payment.userId, payment.buildingId);
 
     let paidUntil: Date | undefined;
     if (payment.packageId) {

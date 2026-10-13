@@ -58,7 +58,7 @@ export class FaceVerificationService {
     private readonly faceDetectorService: FaceDetectorService,
     private readonly mqttService: MqttService,
     private readonly paymentsService: PaymentsService,
-  ) {}
+  ) { }
 
   // Tính toán vector trung bình và chuẩn hóa chuẩn L2 từ danh sách các vector đặc trưng khuôn mặt đa góc
   private calculateMeanNormalizedEmbedding(embeddings: number[][]): number[] {
@@ -308,11 +308,14 @@ export class FaceVerificationService {
 
     if (feeInfo.feeDue > 0) {
       // Khoi tao phien thanh toan SePay cho tram tu Kiosk
-      const intent = await this.paymentsService.createPaymentIntent({
-        packageId: String(matchedPkg._id),
-        paymentType: PaymentType.OVERDUE_PICKUP,
-        isKiosk: true,
-      });
+      const intent = await this.paymentsService.createPaymentIntent(
+        {
+          packageId: String(matchedPkg._id),
+          paymentType: PaymentType.OVERDUE_PICKUP,
+        },
+        undefined,
+        { isKiosk: true },
+      );
 
       const paymentMessage = feeInfo.isOverdue
         ? `Bưu kiện tại Ngăn #${matchedPkg.boxNumber} đã quá hạn lưu kho. Vui lòng quét mã QR trên màn hình Kiosk để nộp phí mở tủ.`
@@ -426,21 +429,21 @@ export class FaceVerificationService {
     const detectedFace = await this.faceDetectorService.detectFace(imageBuffer);
     const faceDetectionInfo: FaceDetectionMetadata = detectedFace
       ? {
-          detected: true,
-          confidence: Math.round(detectedFace.score * 1000) / 1000,
-          box: {
-            x1: Math.round(detectedFace.x1 * 1000) / 1000,
-            y1: Math.round(detectedFace.y1 * 1000) / 1000,
-            x2: Math.round(detectedFace.x2 * 1000) / 1000,
-            y2: Math.round(detectedFace.y2 * 1000) / 1000,
-          },
-          landmarks: detectedFace.landmarks,
-          cropApplied: true,
-        }
+        detected: true,
+        confidence: Math.round(detectedFace.score * 1000) / 1000,
+        box: {
+          x1: Math.round(detectedFace.x1 * 1000) / 1000,
+          y1: Math.round(detectedFace.y1 * 1000) / 1000,
+          x2: Math.round(detectedFace.x2 * 1000) / 1000,
+          y2: Math.round(detectedFace.y2 * 1000) / 1000,
+        },
+        landmarks: detectedFace.landmarks,
+        cropApplied: true,
+      }
       : {
-          detected: false,
-          cropApplied: false,
-        };
+        detected: false,
+        cropApplied: false,
+      };
 
     let croppedFaceBase64: string | undefined;
     if (options?.includeCroppedFace && detectedFace) {
