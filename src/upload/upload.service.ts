@@ -48,6 +48,21 @@ export class UploadService {
     });
   }
 
+  // Tải lên ảnh đính kèm của phiếu báo lỗi
+  async uploadIssueImage(file: Express.Multer.File): Promise<UploadFileResult> {
+    if (!file) {
+      throw new BadRequestException('Vui lòng chọn tệp ảnh đính kèm hợp lệ');
+    }
+
+    return this.storageService.uploadFile(file, {
+      folder: 'smart-locker/issues',
+      transformation: [
+        { width: 1600, height: 1600, crop: 'limit' },
+        { fetch_format: 'auto', quality: 'auto' },
+      ],
+    });
+  }
+
   // Xóa tệp tin đã lưu trữ trên hạ tầng đám mây
   async deleteFile(publicId: string): Promise<boolean> {
     if (!publicId) return false;

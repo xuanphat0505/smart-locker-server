@@ -86,6 +86,19 @@ export class UsersService {
       approvedAt: new Date(),
     });
 
+    await this.activityLogsService.log({
+      actor: await this.activityLogsService.buildActorById(
+        createdByAdminId,
+        Role.SYSTEM_ADMIN,
+      ),
+      buildingId: newAdmin.buildingId,
+      category: ActivityCategory.USER,
+      status: ActivityStatus.INFO,
+      title: 'Tạo tài khoản Ban Quản Lý',
+      description: `${newAdmin.name} (${newAdmin.email})`,
+      target: { type: 'USER', id: String(newAdmin._id), label: newAdmin.name },
+    });
+
     const sanitized = await this.findById(newAdmin._id.toString());
     return sanitized as User;
   }
@@ -124,6 +137,20 @@ export class UsersService {
       approvalStatus: ApprovalStatus.ACTIVE,
       approvedBy: new Types.ObjectId(creator.userId),
       approvedAt: new Date(),
+    });
+
+    await this.activityLogsService.log({
+      actor: await this.activityLogsService.buildActor(creator),
+      buildingId: newResident.buildingId,
+      category: ActivityCategory.USER,
+      status: ActivityStatus.INFO,
+      title: 'Tạo tài khoản cư dân',
+      description: `${newResident.name} (${newResident.phone}) - Căn ${newResident.apartment}`,
+      target: {
+        type: 'USER',
+        id: String(newResident._id),
+        label: newResident.name,
+      },
     });
 
     const sanitized = await this.findById(newResident._id.toString());
@@ -322,6 +349,22 @@ export class UsersService {
       }
     }
 
+    if (updated) {
+      const approved = status === ApprovalStatus.ACTIVE;
+      await this.activityLogsService.log({
+        actor: await this.activityLogsService.buildActorById(
+          approvedBy,
+          Role.BUILDING_ADMIN,
+        ),
+        buildingId: updated.buildingId,
+        category: ActivityCategory.USER,
+        status: approved ? ActivityStatus.SUCCESS : ActivityStatus.WARNING,
+        title: approved ? 'Duyệt hồ sơ cư dân' : 'Từ chối hồ sơ cư dân',
+        description: `${updated.name} (${updated.phone}) - Căn ${updated.apartment ?? 'N/A'}${rejectedReason ? ` - Lý do: ${rejectedReason}` : ''}`,
+        target: { type: 'USER', id: String(updated._id), label: updated.name },
+      });
+    }
+
     return updated;
   }
 
@@ -504,6 +547,10 @@ export class UsersService {
       throw new NotFoundException('Không tìm thấy tài khoản người dùng');
     }
 
+    if (statusChange === 'SUSPEND') {
+      this.notificationsService.notifyAccountSuspended(String(target._id));
+    }
+
     await this.activityLogsService.log({
       actor: await this.activityLogsService.buildActor(admin),
       buildingId: target.buildingId,
@@ -525,6 +572,22 @@ export class UsersService {
     return updated;
   }
 
+  // Ghi nhật ký xóa tài khoản người dùng ở mức cảnh báo vì thao tác không thể hoàn tác
+  private async logUserDeleted(
+    user: User,
+    creator: AuthenticatedUser,
+  ): Promise<void> {
+    await this.activityLogsService.log({
+      actor: await this.activityLogsService.buildActor(creator),
+      buildingId: user.buildingId,
+      category: ActivityCategory.USER,
+      status: ActivityStatus.WARNING,
+      title: 'Xóa tài khoản người dùng',
+      description: `${user.name} (${user.phone}) - Vai trò ${user.role}`,
+      target: { type: 'USER', id: String(user._id), label: user.name },
+    });
+  }
+
   // Xóa tài khoản người dùng theo phạm vi phân quyền
   async removeScoped(
     id: string,
@@ -537,6 +600,7 @@ export class UsersService {
 
     if (creator.role === Role.SYSTEM_ADMIN) {
       await this.userModel.findByIdAndDelete(id).exec();
+      await this.logUserDeleted(user, creator);
       return user;
     }
 
@@ -552,6 +616,7 @@ export class UsersService {
       }
 
       await this.userModel.findByIdAndDelete(id).exec();
+      await this.logUserDeleted(user, creator);
       return user;
     }
 

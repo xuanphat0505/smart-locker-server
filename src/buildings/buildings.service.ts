@@ -14,6 +14,12 @@ import {
   PublicBuildingResponseDto,
 } from './dto';
 import { BuildingStatus } from './enums/building-status.enum';
+import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import {
+  ActivityCategory,
+  ActivityStatus,
+} from '../activity-logs/enums/activity-log.enums';
 import { DEFAULT_PRICING_POLICY } from '../payments/utils/pricing-policy.util';
 
 // Danh sách trường được phép trả về cho API công khai (whitelist, trường mới thêm vào schema mặc định bị ẩn)
@@ -44,7 +50,8 @@ export class BuildingsService {
   constructor(
     @InjectModel(Building.name) private buildingModel: Model<Building>,
     @InjectModel(User.name) private userModel: Model<User>,
-  ) { }
+    private readonly activityLogsService: ActivityLogsService,
+  ) {}
 
   // Khởi tạo một Tòa Nhà mới vào cơ sở dữ liệu
   async create(dto: CreateBuildingDto): Promise<Building> {
@@ -157,7 +164,11 @@ export class BuildingsService {
   }
 
   // Cập nhật thông tin chi tiết của một Tòa Nhà
-  async update(id: string, dto: UpdateBuildingDto): Promise<Building> {
+  async update(
+    id: string,
+    dto: UpdateBuildingDto,
+    actor?: AuthenticatedUser,
+  ): Promise<Building> {
     const current = await this.findById(id);
 
     if (dto.code) {
@@ -235,6 +246,19 @@ export class BuildingsService {
       );
     }
 
+    if (actor) {
+      // Chỉ ghi tên các trường đã đổi, không ghi giá trị để không lộ số tài khoản ngân hàng
+      await this.activityLogsService.log({
+        actor: await this.activityLogsService.buildActor(actor),
+        buildingId: updated._id,
+        category: ActivityCategory.SETTINGS,
+        status: ActivityStatus.INFO,
+        title: 'Cập nhật cấu hình tòa nhà',
+        description: `${updated.name} - Trường thay đổi: ${Object.keys(dto).join(', ')}`,
+        target: { type: 'BUILDING', id: String(updated._id), label: updated.name },
+      });
+    }
+
     return updated;
   }
 
@@ -252,6 +276,7 @@ export class BuildingsService {
   async updateMyBuilding(
     buildingId: string | undefined,
     dto: UpdateBuildingDto,
+    actor?: AuthenticatedUser,
   ): Promise<Building> {
     if (!buildingId) {
       throw new BadRequestException(
@@ -263,7 +288,7 @@ export class BuildingsService {
     const safeDto: UpdateBuildingDto = { ...dto };
     delete safeDto.code;
     delete safeDto.status;
-    return this.update(buildingId, safeDto);
+    return this.update(buildingId, safeDto, actor);
   }
 
   // Xóa Tòa Nhà khỏi hệ thống có kiểm tra ràng buộc cư dân và tài khoản liên kết

@@ -47,6 +47,10 @@ import {
 } from './utils/pricing-policy.util';
 import { MqttService } from '../mqtt/mqtt.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import {
+  ActivityCategory,
+  ActivityStatus,
+} from '../activity-logs/enums/activity-log.enums';
 import { Role } from '../auth/enums/role.enum';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 
@@ -937,6 +941,51 @@ export class PaymentsService {
     return payment;
   }
 
+  // Ghi nhật ký khoản thanh toán vừa được gạch nợ; số tiền nhận ít hơn số phải nộp được đánh dấu cảnh báo
+  private async logPaymentReceived(
+    payment: PaymentDocument,
+    transferAmount: number,
+  ): Promise<void> {
+    const resident = payment.userId
+      ? await this.userModel
+          .findById(payment.userId)
+          .select('name phone')
+          .lean()
+      : null;
+    const underpaid = transferAmount > 0 && transferAmount < payment.amount;
+    const title =
+      payment.paymentType === PaymentType.MONTHLY_SUBSCRIPTION
+        ? 'Thanh toán gói tháng'
+        : payment.isKiosk
+          ? 'Thanh toán phí lưu kho tại Kiosk'
+          : 'Thanh toán phí lưu kho từ xa';
+
+    await this.activityLogsService.log({
+      actor: {
+        userId: payment.userId,
+        name: resident?.name ?? 'Cư dân',
+        phone: resident?.phone,
+        role: Role.RESIDENT,
+      },
+      buildingId: payment.buildingId,
+      category: ActivityCategory.PAYMENT,
+      status: underpaid ? ActivityStatus.WARNING : ActivityStatus.SUCCESS,
+      title,
+      description: underpaid
+        ? `Đơn #${payment.orderCode} - nhận ${transferAmount} VNĐ, thấp hơn ${payment.amount} VNĐ cần nộp`
+        : `Đơn #${payment.orderCode} - ${payment.amount} VNĐ`,
+      target: payment.packageId
+        ? { type: 'PACKAGE', id: String(payment.packageId) }
+        : { type: 'USER', id: String(payment.userId) },
+      metadata: {
+        orderCode: payment.orderCode,
+        amount: payment.amount,
+        paymentType: payment.paymentType,
+        isKiosk: payment.isKiosk ?? false,
+      },
+    });
+  }
+
   // Xử lý dữ liệu webhook từ SePay để tự động gạch nợ và phân nhánh nghiệp vụ an toàn
   async handleSepayWebhook(
     dto: SepayWebhookDto,
@@ -1063,6 +1112,8 @@ export class PaymentsService {
         `[SEPAY_WEBHOOK] Giao dịch #${orderCode} nhận được ${transferAmount} VNĐ, ít hơn số tiền cần nộp ${payment.amount} VNĐ`,
       );
     }
+
+    await this.logPaymentReceived(payment, transferAmount);
 
     if (payment.paymentType === PaymentType.MONTHLY_SUBSCRIPTION) {
       const user = await this.userModel.findById(payment.userId);

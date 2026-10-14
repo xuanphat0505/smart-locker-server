@@ -12,6 +12,11 @@ import { Model } from 'mongoose';
 import * as mqtt from 'mqtt';
 import { Locker } from '../lockers/schemas/locker.schema';
 import { LockerStatus } from '../lockers/enums';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import {
+  ActivityCategory,
+  ActivityStatus,
+} from '../activity-logs/enums/activity-log.enums';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 
 // Cấu trúc dữ liệu bản tin trạng thái phần cứng nhận từ MQTT
@@ -37,6 +42,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     private readonly lockerModel: Model<Locker>,
     @Inject(forwardRef(() => NotificationsGateway))
     private readonly notificationsGateway: NotificationsGateway,
+    private readonly activityLogsService: ActivityLogsService,
   ) {}
 
   // Khởi tạo kết nối tới MQTT Broker khi module khởi động
@@ -165,10 +171,32 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
           const hasItem = Boolean(data.hasItem);
 
           if (event === 'OFFLINE') {
-            await this.lockerModel.updateOne(
-              { code: lockerCode, status: { $ne: LockerStatus.MAINTENANCE } },
+            // Lấy bản ghi trước khi đổi để chỉ ghi nhật ký đúng lúc trạm chuyển sang ngoại tuyến, không lặp lại mỗi bản tin
+            const before = await this.lockerModel.findOneAndUpdate(
+              {
+                code: lockerCode,
+                status: {
+                  $nin: [LockerStatus.MAINTENANCE, LockerStatus.OFFLINE],
+                },
+              },
               { status: LockerStatus.OFFLINE },
+              { returnDocument: 'before' },
             );
+            if (before) {
+              await this.activityLogsService.log({
+                actor: { name: `Trạm tủ ${lockerCode}`, role: 'DEVICE' },
+                buildingId: before.buildingId,
+                category: ActivityCategory.HARDWARE,
+                status: ActivityStatus.WARNING,
+                title: 'Trạm tủ mất kết nối',
+                description: `Trạm ${lockerCode} chuyển sang ngoại tuyến`,
+                target: {
+                  type: 'LOCKER',
+                  id: String(before._id),
+                  label: lockerCode,
+                },
+              });
+            }
             this.logger.warn(
               `Trạm tủ ${lockerCode} vừa ngắt kết nối (OFFLINE)`,
             );
@@ -183,10 +211,26 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
           ) {
             const now = new Date();
             // Trạm tủ đang bảo trì vẫn ghi nhận nhịp tim nhưng không bị ghi đè trạng thái
-            await this.lockerModel.updateOne(
+            const previous = await this.lockerModel.findOneAndUpdate(
               { code: lockerCode, status: { $ne: LockerStatus.MAINTENANCE } },
               { status: LockerStatus.ONLINE, lastHeartbeatAt: now },
+              { returnDocument: 'before' },
             );
+            if (previous?.status === LockerStatus.OFFLINE) {
+              await this.activityLogsService.log({
+                actor: { name: `Trạm tủ ${lockerCode}`, role: 'DEVICE' },
+                buildingId: previous.buildingId,
+                category: ActivityCategory.HARDWARE,
+                status: ActivityStatus.INFO,
+                title: 'Trạm tủ kết nối trở lại',
+                description: `Trạm ${lockerCode} đã trực tuyến`,
+                target: {
+                  type: 'LOCKER',
+                  id: String(previous._id),
+                  label: lockerCode,
+                },
+              });
+            }
             await this.lockerModel.updateOne(
               { code: lockerCode, status: LockerStatus.MAINTENANCE },
               { lastHeartbeatAt: now },

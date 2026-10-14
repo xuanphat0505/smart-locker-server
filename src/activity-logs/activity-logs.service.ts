@@ -5,6 +5,7 @@ import { ActivityLog } from './schemas/activity-log.schema';
 import { LockerLog } from '../lockers/schemas/locker-log.schema';
 import { User } from '../users/schemas/user.schema';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
+import type { ActivityActorRole } from './enums/activity-log.enums';
 import { PaginatedResult } from '../common/dto/pagination.dto';
 import { resolveBuildingScope, toObjectIdOrUndefined } from '../common/utils/building-scope.util';
 import { escapeRegex } from '../common/utils/escape-regex.util';
@@ -81,6 +82,20 @@ export class ActivityLogsService {
       phone: account?.phone,
       role: user.role,
     };
+  }
+
+  // Dựng thông tin người thực hiện từ mã tài khoản khi chỉ có mã mà không có phiên đăng nhập; thiếu mã thì coi là hệ thống
+  async buildActorById(
+    userId: string | undefined,
+    role: ActivityActorRole,
+  ): Promise<ActivityActorInput> {
+    if (!userId) return { name: 'Hệ thống', role: 'SYSTEM' };
+
+    const account = await this.userModel
+      .findById(userId)
+      .select('name phone')
+      .lean();
+    return { userId, name: account?.name ?? 'Không rõ', phone: account?.phone, role };
   }
 
   // Dựng điều kiện lọc dùng chung cho danh sách và thống kê, luôn bị giới hạn theo phạm vi tòa nhà
