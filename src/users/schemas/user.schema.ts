@@ -126,6 +126,14 @@ export class User extends Document {
   // Thời điểm hết hạn gói dịch vụ tháng
   @Prop({ required: false })
   subscriptionExpiresAt?: Date;
+
+  // Ghi chú nội bộ của quản trị viên về người dùng
+  @Prop({ required: false, trim: true, maxlength: 500 })
+  note?: string;
+
+  // Lần gần nhất người dùng đăng nhập hoặc làm mới phiên đăng nhập
+  @Prop({ required: false })
+  lastActiveAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

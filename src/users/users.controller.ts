@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   Request,
   UseGuards,
   UseInterceptors,
@@ -32,6 +33,8 @@ import {
   ChangePasswordDto,
   UpdatePushTokenDto,
   EnrollFaceDto,
+  UpdateUserByAdminDto,
+  ListUsersQueryDto,
 } from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import {
@@ -49,6 +52,7 @@ import {
   ApiChangePasswordDoc,
   ApiUpdatePushTokenDoc,
   ApiEnrollFaceDoc,
+  ApiUpdateUserByAdminDoc,
 } from './swagger/user.swagger';
 
 @ApiTags('Users')
@@ -249,8 +253,14 @@ export class UsersController {
   @Get()
   @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
   @ApiFindAllUsersDoc()
-  async findAll(@Request() req: { user: AuthenticatedUser }): Promise<User[]> {
-    return this.usersService.findAllScoped(req.user);
+  async findAll(
+    @Query() query: ListUsersQueryDto,
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<User[] | Record<string, unknown>[]> {
+    const users = await this.usersService.findAllScoped(req.user);
+    return query.include === 'packageCount'
+      ? this.usersService.withPackageCounts(users)
+      : users;
   }
 
   // Lấy chi tiết thông tin một người dùng theo phạm vi phân quyền
@@ -273,5 +283,17 @@ export class UsersController {
     @Request() req: { user: AuthenticatedUser },
   ): Promise<User | null> {
     return this.usersService.removeScoped(id, req.user);
+  }
+
+  // Sửa thông tin, ghi chú hoặc khóa/mở khóa tài khoản người dùng theo phạm vi quyền (đặt cuối để không che các route PATCH cố định)
+  @Patch(':id')
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
+  @ApiUpdateUserByAdminDoc()
+  async updateByAdmin(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserByAdminDto,
+    @Request() req: { user: AuthenticatedUser },
+  ): Promise<User> {
+    return this.usersService.updateByAdmin(id, dto, req.user);
   }
 }

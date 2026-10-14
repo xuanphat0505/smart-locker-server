@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
@@ -68,12 +69,11 @@ export class AuthService {
     if (!isMatch) {
       throw new UnauthorizedException('Email hoặc mật khẩu không chính xác');
     }
+    this.assertAccountNotSuspended(user.approvalStatus);
 
     const sanitized = this.sanitizeUser(user);
     if (user.buildingId) {
-      const building = await this.buildingsService.findById(
-        user.buildingId.toString(),
-      );
+      const building = await this.buildingsService.findById(user.buildingId.toString());
       if (building) {
         sanitized.buildingName = building.name;
       }
@@ -90,6 +90,9 @@ export class AuthService {
     buildingId?: string,
     approvalStatus?: ApprovalStatus,
   ): Promise<TokensResponse> {
+    // Đường chung của đăng nhập, làm mới token và xác thực 2FA nên tài khoản bị khóa không nhận được phiên mới
+    this.assertAccountNotSuspended(approvalStatus);
+
     const payload: JwtPayload = {
       sub: userId,
       email,
@@ -98,13 +101,9 @@ export class AuthService {
       approvalStatus,
     };
 
-    const accessSecret = this.configService.get<string>(
-      'JWT_ACCESS_SECRET_KEY',
-    );
+    const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET_KEY');
 
-    const refreshSecret = this.configService.get<string>(
-      'JWT_REFRESH_SECRET_KEY',
-    );
+    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET_KEY');
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
@@ -121,12 +120,18 @@ export class AuthService {
   }
 
   // Cập nhật mã băm của Refresh Token vào cơ sở dữ liệu để kiểm soát bảo mật
-  async updateRefreshTokenHash(
-    userId: string,
-    refreshToken: string,
-  ): Promise<void> {
+  async updateRefreshTokenHash(userId: string, refreshToken: string): Promise<void> {
     const hash = await bcrypt.hash(refreshToken, 10);
-    await this.usersService.updateRefreshTokenHash(userId, hash);
+    await this.usersService.updateRefreshTokenHash(userId, hash, true);
+  }
+
+  // Chặn cấp phiên đăng nhập cho tài khoản đã bị quản trị viên tạm khóa
+  private assertAccountNotSuspended(approvalStatus?: ApprovalStatus): void {
+    if (approvalStatus === ApprovalStatus.SUSPENDED) {
+      throw new ForbiddenException(
+        'Tài khoản của bạn đã bị tạm khóa. Vui lòng liên hệ Ban Quản Lý.',
+      );
+    }
   }
 
   // Tạo mã token JWT và trả về thông tin đăng nhập thành công của người dùng
@@ -135,9 +140,7 @@ export class AuthService {
 
     // Nếu tài khoản đã kích hoạt 2FA thì phát hành tempToken yêu cầu xác thực bước hai
     if (user.twoFactorAuth?.enabled) {
-      const accessSecret = this.configService.get<string>(
-        'JWT_ACCESS_SECRET_KEY',
-      );
+      const accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET_KEY');
       const tempToken = await this.jwtService.signAsync(
         {
           sub: userId,
@@ -179,16 +182,12 @@ export class AuthService {
   async registerResident(dto: RegisterResidentDto): Promise<RegisterResponse> {
     const existingEmail = await this.usersService.findByEmail(dto.email);
     if (existingEmail) {
-      throw new ConflictException(
-        'Địa chỉ email này đã được đăng ký tài khoản',
-      );
+      throw new ConflictException('Địa chỉ email này đã được đăng ký tài khoản');
     }
 
     const existingPhone = await this.usersService.findByPhone(dto.phone);
     if (existingPhone) {
-      throw new ConflictException(
-        'Số điện thoại này đã được đăng ký tài khoản',
-      );
+      throw new ConflictException('Số điện thoại này đã được đăng ký tài khoản');
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
@@ -196,8 +195,7 @@ export class AuthService {
     // Chuyển đổi và xử lý kiểm tra sinh trắc học khuôn mặt nếu cư dân cung cấp ảnh chính diện
     const imageBuffers: Buffer[] = [];
     const rawImage =
-      dto.faceImageBase64 ||
-      (Array.isArray(dto.imagesBase64) ? dto.imagesBase64[0] : undefined);
+      dto.faceImageBase64 || (Array.isArray(dto.imagesBase64) ? dto.imagesBase64[0] : undefined);
     if (rawImage && typeof rawImage === 'string' && rawImage.trim()) {
       const cleanBase64 = rawImage.replace(/^data:image\/\w+;base64,/, '');
       const buf = Buffer.from(cleanBase64, 'base64');
@@ -213,11 +211,10 @@ export class AuthService {
     };
 
     if (imageBuffers.length > 0) {
-      const processed =
-        await this.faceVerificationService.processEnrollmentBuffers(
-          imageBuffers,
-          dto.email,
-        );
+      const processed = await this.faceVerificationService.processEnrollmentBuffers(
+        imageBuffers,
+        dto.email,
+      );
       faceAuthData = {
         enabled: true,
         embedding: processed.embedding,
@@ -259,9 +256,7 @@ export class AuthService {
         const buildingName = building?.name || 'Tòa Nhà Chung Cư';
 
         // Tầng 1: Lấy danh sách email của các tài khoản BUILDING_ADMIN đang active thuộc tòa nhà
-        const activeAdminEmails = admins
-          .map((admin) => admin.email)
-          .filter(Boolean);
+        const activeAdminEmails = admins.map((admin) => admin.email).filter(Boolean);
 
         let targetEmails: string[] = [];
         if (activeAdminEmails.length > 0) {
@@ -306,16 +301,12 @@ export class AuthService {
   async registerShipper(dto: RegisterShipperDto): Promise<RegisterResponse> {
     const existingEmail = await this.usersService.findByEmail(dto.email);
     if (existingEmail) {
-      throw new ConflictException(
-        'Địa chỉ email này đã được đăng ký tài khoản',
-      );
+      throw new ConflictException('Địa chỉ email này đã được đăng ký tài khoản');
     }
 
     const existingPhone = await this.usersService.findByPhone(dto.phone);
     if (existingPhone) {
-      throw new ConflictException(
-        'Số điện thoại này đã được đăng ký tài khoản',
-      );
+      throw new ConflictException('Số điện thoại này đã được đăng ký tài khoản');
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
@@ -339,21 +330,15 @@ export class AuthService {
   // Cấp mới cặp token khi Access Token hết hạn thông qua Refresh Token hợp lệ
   async refreshTokens(dto: RefreshTokenDto): Promise<TokensResponse> {
     const refreshSecret =
-      this.configService.get<string>('JWT_REFRESH_SECRET_KEY') ||
-      'default_refresh_secret_key';
+      this.configService.get<string>('JWT_REFRESH_SECRET_KEY') || 'default_refresh_secret_key';
 
     let payload: JwtPayload;
     try {
-      payload = await this.jwtService.verifyAsync<JwtPayload>(
-        dto.refreshToken,
-        {
-          secret: refreshSecret,
-        },
-      );
+      payload = await this.jwtService.verifyAsync<JwtPayload>(dto.refreshToken, {
+        secret: refreshSecret,
+      });
     } catch {
-      throw new UnauthorizedException(
-        'Refresh token không hợp lệ hoặc đã hết hạn',
-      );
+      throw new UnauthorizedException('Refresh token không hợp lệ hoặc đã hết hạn');
     }
 
     const user = await this.usersService.findByIdWithRefreshToken(payload.sub);
@@ -361,14 +346,9 @@ export class AuthService {
       throw new UnauthorizedException('Truy cập bị từ chối');
     }
 
-    const isMatch = await bcrypt.compare(
-      dto.refreshToken,
-      user.refreshTokenHash,
-    );
+    const isMatch = await bcrypt.compare(dto.refreshToken, user.refreshTokenHash);
     if (!isMatch) {
-      throw new UnauthorizedException(
-        'Refresh token không hợp lệ hoặc đã bị thu hồi',
-      );
+      throw new UnauthorizedException('Refresh token không hợp lệ hoặc đã bị thu hồi');
     }
 
     const tokens = await this.generateTokens(
@@ -385,13 +365,10 @@ export class AuthService {
   }
 
   // Tiếp nhận yêu cầu quên mật khẩu, sinh mã OTP 6 chữ số băm SHA-256 và gửi email cho người dùng
-  async forgotPassword(
-    dto: ForgotPasswordDto,
-  ): Promise<{ statusCode: number; message: string }> {
+  async forgotPassword(dto: ForgotPasswordDto): Promise<{ statusCode: number; message: string }> {
     const genericResponse = {
       statusCode: 200,
-      message:
-        'Nếu email tồn tại trên hệ thống, mã xác thực OTP đã được gửi đến hộp thư của bạn.',
+      message: 'Nếu email tồn tại trên hệ thống, mã xác thực OTP đã được gửi đến hộp thư của bạn.',
     };
 
     const user = await this.usersService.findByEmail(dto.email);
@@ -401,8 +378,7 @@ export class AuthService {
 
     if (user.lastResetPasswordRequestedAt) {
       const diffSeconds = Math.floor(
-        (Date.now() - new Date(user.lastResetPasswordRequestedAt).getTime()) /
-          1000,
+        (Date.now() - new Date(user.lastResetPasswordRequestedAt).getTime()) / 1000,
       );
       if (diffSeconds < 60) {
         throw new BadRequestException(
@@ -415,60 +391,42 @@ export class AuthService {
     const hashedOtp = crypto.createHash('sha256').update(otp).digest('hex');
     const expires = new Date(Date.now() + 10 * 60 * 1000);
 
-    await this.usersService.setResetPasswordOtp(
-      user._id.toString(),
-      hashedOtp,
-      expires,
-    );
+    await this.usersService.setResetPasswordOtp(user._id.toString(), hashedOtp, expires);
 
-    this.mailService
-      .sendResetPasswordOtp(user.email, user.name, otp)
-      .catch((err) => {
-        this.logger.error(
-          `Lỗi khi gửi email mã OTP đặt lại mật khẩu: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
+    this.mailService.sendResetPasswordOtp(user.email, user.name, otp).catch((err) => {
+      this.logger.error(
+        `Lỗi khi gửi email mã OTP đặt lại mật khẩu: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
 
     return genericResponse;
   }
 
   // Xác thực mã OTP và cập nhật mật khẩu mới cho tài khoản người dùng
-  async resetPassword(
-    dto: ResetPasswordDto,
-  ): Promise<{ statusCode: number; message: string }> {
+  async resetPassword(dto: ResetPasswordDto): Promise<{ statusCode: number; message: string }> {
     const user = await this.usersService.findByEmail(dto.email, {
       includeResetOtp: true,
     });
     if (!user || !user.resetPasswordOtp || !user.resetPasswordOtpExpires) {
-      throw new BadRequestException(
-        'Yêu cầu đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
-      );
+      throw new BadRequestException('Yêu cầu đặt lại mật khẩu không hợp lệ hoặc đã hết hạn');
     }
 
     if (new Date() > new Date(user.resetPasswordOtpExpires)) {
-      throw new BadRequestException(
-        'Mã OTP đã hết hạn. Vui lòng gửi lại yêu cầu mới',
-      );
+      throw new BadRequestException('Mã OTP đã hết hạn. Vui lòng gửi lại yêu cầu mới');
     }
 
     const hashedOtp = crypto.createHash('sha256').update(dto.otp).digest('hex');
 
     if (hashedOtp !== user.resetPasswordOtp) {
-      throw new BadRequestException(
-        'Mã OTP không chính xác. Vui lòng kiểm tra lại',
-      );
+      throw new BadRequestException('Mã OTP không chính xác. Vui lòng kiểm tra lại');
     }
 
     const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
-    await this.usersService.updatePasswordAndClearResetOtp(
-      user._id.toString(),
-      hashedPassword,
-    );
+    await this.usersService.updatePasswordAndClearResetOtp(user._id.toString(), hashedPassword);
 
     return {
       statusCode: 200,
-      message:
-        'Đặt lại mật khẩu thành công. Bạn đã có thể đăng nhập bằng mật khẩu mới.',
+      message: 'Đặt lại mật khẩu thành công. Bạn đã có thể đăng nhập bằng mật khẩu mới.',
     };
   }
 
@@ -486,9 +444,7 @@ export class AuthService {
     }
 
     if (user.twoFactorAuth?.enabled) {
-      throw new BadRequestException(
-        'Tài khoản đã kích hoạt xác thực hai bước trước đó',
-      );
+      throw new BadRequestException('Tài khoản đã kích hoạt xác thực hai bước trước đó');
     }
 
     const secret = authenticator.generateSecret();
@@ -497,10 +453,7 @@ export class AuthService {
     const qrCodeDataUrl = await qrcode.toDataURL(otpauthUrl);
 
     const encryptedTempSecret = encryptText(secret);
-    await this.usersService.saveTempTwoFactorSecret(
-      userId,
-      encryptedTempSecret,
-    );
+    await this.usersService.saveTempTwoFactorSecret(userId, encryptedTempSecret);
 
     return {
       secret,
@@ -509,10 +462,7 @@ export class AuthService {
   }
 
   // Kích hoạt xác thực hai bước sau khi người dùng quét mã và nhập mã OTP xác nhận
-  async turnOn2fa(
-    userId: string,
-    dto: TwoFactorTurnOnDto,
-  ): Promise<TwoFactorTurnOnResponse> {
+  async turnOn2fa(userId: string, dto: TwoFactorTurnOnDto): Promise<TwoFactorTurnOnResponse> {
     const user = await this.usersService.findUserFor2FA(userId, {
       includeTempSecret: true,
     });
@@ -528,9 +478,7 @@ export class AuthService {
     const isValid = authenticator.check(dto.code, plainSecret);
 
     if (!isValid) {
-      throw new BadRequestException(
-        'Mã xác thực 2FA không chính xác hoặc đã hết hạn',
-      );
+      throw new BadRequestException('Mã xác thực 2FA không chính xác hoặc đã hết hạn');
     }
 
     const recoveryCodes: string[] = [];
@@ -544,11 +492,7 @@ export class AuthService {
     }
 
     const encryptedSecret = encryptText(plainSecret);
-    await this.usersService.enableTwoFactor(
-      userId,
-      encryptedSecret,
-      hashedRecoveryCodes,
-    );
+    await this.usersService.enableTwoFactor(userId, encryptedSecret, hashedRecoveryCodes);
 
     return {
       message: 'Kích hoạt xác thực hai bước thành công',
@@ -557,24 +501,16 @@ export class AuthService {
   }
 
   // Tắt xác thực hai bước bằng mật khẩu tài khoản hiện tại
-  async turnOff2fa(
-    userId: string,
-    dto: TwoFactorTurnOffDto,
-  ): Promise<{ message: string }> {
+  async turnOff2fa(userId: string, dto: TwoFactorTurnOffDto): Promise<{ message: string }> {
     const user = await this.usersService.findUserFor2FA(userId, {
       includePassword: true,
     });
 
     if (!user || !user.twoFactorAuth?.enabled) {
-      throw new BadRequestException(
-        'Tài khoản hiện chưa kích hoạt xác thực hai bước',
-      );
+      throw new BadRequestException('Tài khoản hiện chưa kích hoạt xác thực hai bước');
     }
 
-    const isPasswordMatch = await bcrypt.compare(
-      dto.currentPassword,
-      user.password,
-    );
+    const isPasswordMatch = await bcrypt.compare(dto.currentPassword, user.password);
     if (!isPasswordMatch) {
       throw new BadRequestException('Mật khẩu tài khoản không chính xác');
     }
@@ -594,9 +530,7 @@ export class AuthService {
         secret: this.configService.get<string>('JWT_ACCESS_SECRET_KEY'),
       });
     } catch {
-      throw new UnauthorizedException(
-        'Phiên xác thực 2FA không hợp lệ hoặc đã hết hạn',
-      );
+      throw new UnauthorizedException('Phiên xác thực 2FA không hợp lệ hoặc đã hết hạn');
     }
 
     if (payload.type !== '2FA_TEMP') {
@@ -619,15 +553,8 @@ export class AuthService {
       const codeInput = dto.code.trim().toUpperCase();
       let matchedIndex = -1;
 
-      for (
-        let i = 0;
-        i < (user.twoFactorAuth.recoveryCodes || []).length;
-        i++
-      ) {
-        const isMatch = await bcrypt.compare(
-          codeInput,
-          user.twoFactorAuth.recoveryCodes[i],
-        );
+      for (let i = 0; i < (user.twoFactorAuth.recoveryCodes || []).length; i++) {
+        const isMatch = await bcrypt.compare(codeInput, user.twoFactorAuth.recoveryCodes[i]);
         if (isMatch) {
           matchedIndex = i;
           break;
@@ -635,19 +562,14 @@ export class AuthService {
       }
 
       if (matchedIndex === -1) {
-        throw new BadRequestException(
-          'Mã khôi phục không chính xác hoặc đã từng được sử dụng',
-        );
+        throw new BadRequestException('Mã khôi phục không chính xác hoặc đã từng được sử dụng');
       }
 
       const remainingRecoveryCodes = [
         ...user.twoFactorAuth.recoveryCodes.slice(0, matchedIndex),
         ...user.twoFactorAuth.recoveryCodes.slice(matchedIndex + 1),
       ];
-      await this.usersService.consumeRecoveryCode(
-        user._id.toString(),
-        remainingRecoveryCodes,
-      );
+      await this.usersService.consumeRecoveryCode(user._id.toString(), remainingRecoveryCodes);
     } else {
       if (!user.twoFactorAuth.secret) {
         throw new UnauthorizedException('Khóa bí mật 2FA không tồn tại');
@@ -658,9 +580,7 @@ export class AuthService {
       const isValid = authenticator.check(dto.code, plainSecret);
 
       if (!isValid) {
-        throw new BadRequestException(
-          'Mã xác thực 2FA không chính xác hoặc đã hết hạn',
-        );
+        throw new BadRequestException('Mã xác thực 2FA không chính xác hoặc đã hết hạn');
       }
     }
 
