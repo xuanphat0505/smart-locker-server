@@ -186,6 +186,15 @@ export class NotificationsGateway
     this.server.to(residentRoom).emit('RESIDENT_APPROVAL_RESULT', eventPayload);
   }
 
+  // Báo tức thì cho cư dân đang mở ứng dụng rằng tài khoản vừa bị tạm khóa
+  notifyAccountSuspended(residentId: string): void {
+    this.server.to(`resident_${residentId}`).emit('ACCOUNT_SUSPENDED', {
+      type: 'ACCOUNT_SUSPENDED',
+      residentId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   // Phát thông báo bưu kiện mới đã đến ngăn tủ cho Cư Dân
   notifyPackageDropOff(
     residentId: string,

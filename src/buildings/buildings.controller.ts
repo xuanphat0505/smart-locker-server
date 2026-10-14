@@ -79,7 +79,11 @@ export class BuildingsController {
     @Request() req: { user: AuthenticatedUser },
     @Body() dto: UpdateBuildingDto,
   ): Promise<Building> {
-    return this.buildingsService.updateMyBuilding(req.user.buildingId, dto);
+    return this.buildingsService.updateMyBuilding(
+      req.user.buildingId,
+      dto,
+      req.user,
+    );
   }
 
   // Lấy thông tin chi tiết một Tòa Nhà theo mã id (API công khai, không chứa thông tin thanh toán)
@@ -121,10 +125,10 @@ export class BuildingsController {
     }
 
     if (req.user.role === Role.BUILDING_ADMIN) {
-      return this.buildingsService.updateMyBuilding(id, dto);
+      return this.buildingsService.updateMyBuilding(id, dto, req.user);
     }
 
-    return this.buildingsService.update(id, dto);
+    return this.buildingsService.update(id, dto, req.user);
   }
 
   // Xóa Tòa Nhà khỏi hệ thống (Dành riêng cho Quản trị viên cấp cao System Admin)

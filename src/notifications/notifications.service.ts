@@ -283,6 +283,17 @@ export class NotificationsService {
     }
   }
 
+  // Phát sự kiện tạm khóa tài khoản qua WebSocket; lỗi phát sự kiện không được làm hỏng thao tác khóa
+  notifyAccountSuspended(residentId: string): void {
+    try {
+      this.notificationsGateway.notifyAccountSuspended(residentId);
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi phát sự kiện tạm khóa tài khoản: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   // Điều phối phát thông báo kết quả phê duyệt hoặc từ chối hồ sơ cư dân
   async notifyResidentApprovalResult(
     buildingId: string,

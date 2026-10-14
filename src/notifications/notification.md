@@ -156,6 +156,19 @@ Dành cho ứng dụng di động của cư dân lắng nghe kết quả hồ s�
 }
 ```
 
+#### 3. `ACCOUNT_SUSPENDED` - Tài khoản cư dân bị tạm khóa
+- **Thời điểm kích hoạt**: Khi quản trị viên gọi `PATCH /users/:id` với `approvalStatus = SUSPENDED` và trạng thái thực sự thay đổi.
+- **Kênh phát**: Chỉ phòng `resident_{residentId}`, để Mobile App đang mở chuyển ngay sang màn "Account Suspended" thay vì chờ access token hết hạn tối đa 15 phút.
+- **Lưu ý**: Lỗi phát sự kiện được ghi log và không làm hỏng thao tác khóa. Ứng dụng ở nền hoặc mất kết nối vẫn bị đăng xuất khi refresh token bị từ chối.
+- **Cấu trúc Payload**:
+```json
+{
+  "type": "ACCOUNT_SUSPENDED",
+  "residentId": "6a982931a789123bca012984",
+  "timestamp": "2026-09-02T03:30:00.000Z"
+}
+```
+
 ---
 
 ## 5. Hướng Dẫn Tích Hợp Phía Client (Client Integration Guide)

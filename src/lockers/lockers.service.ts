@@ -18,6 +18,11 @@ import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { HEARTBEAT_TIMEOUT_MS } from './utils/locker-health.util';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import {
+  ActivityCategory,
+  ActivityStatus,
+} from '../activity-logs/enums/activity-log.enums';
 
 // Trạm tủ trả về cho trang quản trị, kèm trạng thái hiệu lực và số ngăn trống/đang chứa hàng
 export interface LockerListItem {
@@ -41,6 +46,7 @@ export class LockersService {
     @InjectModel(Box.name) private readonly boxModel: Model<Box>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Building.name) private readonly buildingModel: Model<Building>,
+    private readonly activityLogsService: ActivityLogsService,
   ) {}
 
   // Khởi tạo trạm tủ mới kèm việc tự động sinh toàn bộ các ngăn tủ vật lý con
@@ -359,6 +365,19 @@ export class LockersService {
     if (!updated) {
       throw new NotFoundException('Trạm tủ không tồn tại trong hệ thống');
     }
+
+    await this.activityLogsService.log({
+      actor: await this.activityLogsService.buildActor(user),
+      buildingId: locker.buildingId,
+      category: ActivityCategory.SETTINGS,
+      status:
+        dto.status === LockerStatus.MAINTENANCE
+          ? ActivityStatus.WARNING
+          : ActivityStatus.INFO,
+      title: 'Cập nhật thông tin trạm tủ',
+      description: `Trạm ${locker.code} - Trường thay đổi: ${Object.keys(updateData).join(', ')}`,
+      target: { type: 'LOCKER', id: String(locker._id), label: locker.code },
+    });
 
     return updated;
   }

@@ -4,6 +4,7 @@ import { BuildingsController } from './buildings.controller';
 import { BuildingsService } from './buildings.service';
 import { Building, BuildingSchema } from './schemas/building.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { User, UserSchema } from '../users/schemas/user.schema';
       { name: Building.name, schema: BuildingSchema },
       { name: User.name, schema: UserSchema },
     ]),
+    ActivityLogsModule,
   ],
   controllers: [BuildingsController],
   providers: [BuildingsService],

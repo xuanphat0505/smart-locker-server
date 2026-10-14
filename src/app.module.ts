@@ -19,6 +19,7 @@ import { MqttModule } from './mqtt/mqtt.module';
 import { AiModule } from './ai/ai.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ActivityLogsModule } from './activity-logs/activity-logs.module';
+import { IssuesModule } from './issues/issues.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { ActivityLogsModule } from './activity-logs/activity-logs.module';
     MqttModule,
     AiModule,
     ActivityLogsModule,
+    IssuesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
