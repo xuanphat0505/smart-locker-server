@@ -138,3 +138,69 @@ export function ApiUpdateLockerDoc() {
     ApiResponse({ status: 404, description: 'Trạm tủ không tồn tại' }),
   );
 }
+
+// Tài liệu Swagger cho endpoint quản trị viên xem ngăn tủ kèm bưu kiện
+export function ApiGetBoxesForAdminDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Danh sách ngăn tủ kèm bưu kiện cho quản trị viên',
+      description:
+        'Trả về từng ngăn cùng bưu kiện đang nằm trong ngăn (mã vận đơn, người nhận, thời điểm gửi). Không trả OTP hay mã QR. Building Admin chỉ xem trạm của tòa mình',
+    }),
+    ApiParam({ name: 'code', example: 'LK-S101-01', description: 'Mã trạm tủ' }),
+    ApiResponse({ status: 200, description: 'Lấy danh sách ngăn thành công' }),
+    ApiResponse({ status: 403, description: 'Trạm tủ thuộc tòa nhà khác' }),
+    ApiResponse({ status: 404, description: 'Trạm tủ không tồn tại' }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint đổi trạng thái ngăn tủ
+export function ApiUpdateBoxStatusDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Chuyển ngăn tủ sang bảo trì hoặc sẵn sàng',
+      description:
+        'Chỉ đổi giữa AVAILABLE và MAINTENANCE, bắt buộc có lý do. Từ chối khi ngăn đang chứa bưu kiện',
+    }),
+    ApiParam({ name: 'code', example: 'LK-S101-01', description: 'Mã trạm tủ' }),
+    ApiParam({ name: 'boxNumber', example: 4, description: 'Số ngăn tủ' }),
+    ApiResponse({ status: 200, description: 'Đổi trạng thái thành công' }),
+    ApiResponse({ status: 403, description: 'Trạm tủ thuộc tòa nhà khác' }),
+    ApiResponse({ status: 404, description: 'Trạm tủ hoặc ngăn không tồn tại' }),
+    ApiResponse({ status: 409, description: 'Ngăn đang chứa bưu kiện' }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint mở khóa ngăn tủ từ xa
+export function ApiUnlockBoxDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Mở khóa ngăn tủ từ xa',
+      description:
+        'Gửi lệnh mở cửa qua MQTT, bắt buộc có lý do và được ghi nhật ký. Chỉ mở cửa vật lý, không đổi trạng thái bưu kiện hay ngăn. Từ chối khi trạm ngoại tuyến để lệnh không bị thực thi muộn; chặn gọi lặp trong 10 giây',
+    }),
+    ApiParam({ name: 'code', example: 'LK-S101-01', description: 'Mã trạm tủ' }),
+    ApiParam({ name: 'boxNumber', example: 4, description: 'Số ngăn tủ' }),
+    ApiResponse({ status: 201, description: 'Đã gửi lệnh mở khóa' }),
+    ApiResponse({ status: 403, description: 'Trạm tủ thuộc tòa nhà khác' }),
+    ApiResponse({ status: 404, description: 'Trạm tủ hoặc ngăn không tồn tại' }),
+    ApiResponse({ status: 429, description: 'Vừa có lệnh mở khóa cho ngăn này' }),
+    ApiResponse({ status: 502, description: 'Không gửi được lệnh tới trạm tủ' }),
+    ApiResponse({ status: 503, description: 'Trạm tủ đang ngoại tuyến' }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint lịch sử thao tác của trạm tủ
+export function ApiGetLockerLogsDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Lịch sử thao tác của trạm tủ',
+      description:
+        'Đọc từ nhật ký phần cứng LockerLog, mới nhất trước, có phân trang. Lọc theo ngăn, loại thao tác và khoảng thời gian',
+    }),
+    ApiParam({ name: 'code', example: 'LK-S101-01', description: 'Mã trạm tủ' }),
+    ApiResponse({ status: 200, description: 'Trả về { data, total, page, limit }' }),
+    ApiResponse({ status: 403, description: 'Trạm tủ thuộc tòa nhà khác' }),
+    ApiResponse({ status: 404, description: 'Trạm tủ không tồn tại' }),
+  );
+}

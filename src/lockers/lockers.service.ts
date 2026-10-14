@@ -17,9 +17,7 @@ import { LockerStatus, BoxStatus, BoxSize, DoorStatus } from './enums';
 import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
-
-// Quá khoảng thời gian này không có nhịp tim thì trạm tủ được coi là mất kết nối
-const HEARTBEAT_TIMEOUT_MS = 75000;
+import { HEARTBEAT_TIMEOUT_MS } from './utils/locker-health.util';
 
 // Trạm tủ trả về cho trang quản trị, kèm trạng thái hiệu lực và số ngăn trống/đang chứa hàng
 export interface LockerListItem {
@@ -54,18 +52,14 @@ export class LockersService {
       code: formattedCode,
     });
     if (existingCode) {
-      throw new ConflictException(
-        `Mã trạm tủ ${formattedCode} đã tồn tại trong hệ thống`,
-      );
+      throw new ConflictException(`Mã trạm tủ ${formattedCode} đã tồn tại trong hệ thống`);
     }
 
     const existingMac = await this.lockerModel.findOne({
       macAddress: formattedMac,
     });
     if (existingMac) {
-      throw new ConflictException(
-        `Địa chỉ MAC ${formattedMac} đã được gán cho một trạm tủ khác`,
-      );
+      throw new ConflictException(`Địa chỉ MAC ${formattedMac} đã được gán cho một trạm tủ khác`);
     }
 
     if (!Types.ObjectId.isValid(dto.buildingId)) {
@@ -74,9 +68,7 @@ export class LockersService {
 
     const building = await this.buildingModel.findById(dto.buildingId);
     if (!building) {
-      throw new NotFoundException(
-        'Tòa nhà đặt trạm tủ không tồn tại trong hệ thống',
-      );
+      throw new NotFoundException('Tòa nhà đặt trạm tủ không tồn tại trong hệ thống');
     }
 
     const generatedApiKey = crypto.randomBytes(24).toString('hex');
@@ -164,16 +156,12 @@ export class LockersService {
     }
 
     const now = Date.now();
-    const lastHeartbeat = locker.lastHeartbeatAt
-      ? new Date(locker.lastHeartbeatAt).getTime()
-      : 0;
+    const lastHeartbeat = locker.lastHeartbeatAt ? new Date(locker.lastHeartbeatAt).getTime() : 0;
     const diffMs = now - lastHeartbeat;
 
     // Trạm tủ được coi là Online nếu trạng thái là ONLINE và có nhịp tim trong vòng 75 giây
     const isOnline =
-      locker.status === LockerStatus.ONLINE &&
-      lastHeartbeat > 0 &&
-      diffMs <= HEARTBEAT_TIMEOUT_MS;
+      locker.status === LockerStatus.ONLINE && lastHeartbeat > 0 && diffMs <= HEARTBEAT_TIMEOUT_MS;
 
     return {
       code: locker.code,
@@ -188,13 +176,9 @@ export class LockersService {
   // Lấy sơ đồ trạng thái toàn bộ các ngăn tủ thời gian thực phục vụ tài xế chọn ngăn
   async getBoxesByLockerCode(code: string) {
     const locker = await this.findByCode(code);
-    const boxes = await this.boxModel
-      .find({ lockerId: locker._id })
-      .sort({ boxNumber: 1 });
+    const boxes = await this.boxModel.find({ lockerId: locker._id }).sort({ boxNumber: 1 });
 
-    const availableCount = boxes.filter(
-      (b) => b.status === BoxStatus.AVAILABLE,
-    ).length;
+    const availableCount = boxes.filter((b) => b.status === BoxStatus.AVAILABLE).length;
 
     return {
       lockerCode: locker.code,
@@ -293,10 +277,7 @@ export class LockersService {
       const counts = countByLocker.get(String(locker._id));
       return {
         ...locker,
-        status: this.resolveEffectiveStatus(
-          locker.status,
-          locker.lastHeartbeatAt,
-        ),
+        status: this.resolveEffectiveStatus(locker.status, locker.lastHeartbeatAt),
         availableBoxes: counts?.available ?? 0,
         occupiedBoxes: counts?.occupied ?? 0,
       };
@@ -304,18 +285,12 @@ export class LockersService {
   }
 
   // Tính trạng thái thực tế: tủ báo ONLINE nhưng quá hạn nhịp tim thì coi là OFFLINE
-  private resolveEffectiveStatus(
-    status: LockerStatus,
-    lastHeartbeatAt?: Date,
-  ): LockerStatus {
+  private resolveEffectiveStatus(status: LockerStatus, lastHeartbeatAt?: Date): LockerStatus {
     if (status !== LockerStatus.ONLINE) {
       return status;
     }
-    const lastHeartbeat = lastHeartbeatAt
-      ? new Date(lastHeartbeatAt).getTime()
-      : 0;
-    const isAlive =
-      lastHeartbeat > 0 && Date.now() - lastHeartbeat <= HEARTBEAT_TIMEOUT_MS;
+    const lastHeartbeat = lastHeartbeatAt ? new Date(lastHeartbeatAt).getTime() : 0;
+    const isAlive = lastHeartbeat > 0 && Date.now() - lastHeartbeat <= HEARTBEAT_TIMEOUT_MS;
     return isAlive ? LockerStatus.ONLINE : LockerStatus.OFFLINE;
   }
 
@@ -325,9 +300,7 @@ export class LockersService {
       throw new BadRequestException('Mã ID trạm tủ không hợp lệ');
     }
 
-    const locker = await this.lockerModel
-      .findById(id)
-      .populate('buildingId', 'name code address');
+    const locker = await this.lockerModel.findById(id).populate('buildingId', 'name code address');
 
     if (!locker) {
       throw new NotFoundException('Trạm tủ không tồn tại trong hệ thống');
@@ -337,14 +310,8 @@ export class LockersService {
   }
 
   // Cập nhật thông tin cấu hình, vị trí hoặc tọa độ GPS trạm tủ (id có thể là ObjectId hoặc mã code)
-  async update(
-    id: string,
-    dto: UpdateLockerDto,
-    user: AuthenticatedUser,
-  ): Promise<Locker> {
-    let locker = Types.ObjectId.isValid(id)
-      ? await this.lockerModel.findById(id)
-      : null;
+  async update(id: string, dto: UpdateLockerDto, user: AuthenticatedUser): Promise<Locker> {
+    let locker = Types.ObjectId.isValid(id) ? await this.lockerModel.findById(id) : null;
 
     if (!locker) {
       locker = await this.lockerModel.findOne({
@@ -361,9 +328,7 @@ export class LockersService {
       user.role === Role.BUILDING_ADMIN &&
       String(locker.buildingId) !== String(user.buildingId)
     ) {
-      throw new ForbiddenException(
-        'Bạn không có quyền chỉnh sửa trạm tủ của tòa nhà khác',
-      );
+      throw new ForbiddenException('Bạn không có quyền chỉnh sửa trạm tủ của tòa nhà khác');
     }
 
     const updateData: Record<string, unknown> = {};
@@ -388,11 +353,7 @@ export class LockersService {
     }
 
     const updated = await this.lockerModel
-      .findByIdAndUpdate(
-        locker._id,
-        { $set: updateData },
-        { returnDocument: 'after' },
-      )
+      .findByIdAndUpdate(locker._id, { $set: updateData }, { returnDocument: 'after' })
       .populate('buildingId', 'name code address');
 
     if (!updated) {

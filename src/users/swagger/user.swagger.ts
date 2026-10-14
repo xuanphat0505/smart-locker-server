@@ -4,6 +4,7 @@ import {
   ApiResponse,
   ApiConsumes,
   ApiBody,
+  ApiQuery,
 } from '@nestjs/swagger';
 
 // Tài liệu Swagger cho endpoint Quản trị viên cấp cao System Admin tạo tài khoản Ban Quản Lý Tòa Nhà
@@ -163,7 +164,13 @@ export function ApiFindAllUsersDoc() {
     ApiOperation({
       summary: 'Lấy danh sách người dùng theo phạm vi phân quyền',
       description:
-        'System Admin xem toàn bộ người dùng trong hệ thống; Building Admin chỉ xem danh sách cư dân thuộc tòa nhà do mình quản lý',
+        'System Admin xem toàn bộ người dùng trong hệ thống; Building Admin chỉ xem danh sách cư dân thuộc tòa nhà do mình quản lý. Mỗi bản ghi có lastActiveAt và note; thêm include=packageCount để nhận tổng số bưu kiện',
+    }),
+    ApiQuery({
+      name: 'include',
+      required: false,
+      enum: ['packageCount'],
+      description: 'Kèm tổng số bưu kiện của từng người dùng',
     }),
     ApiResponse({
       status: 200,
@@ -378,6 +385,34 @@ export function ApiEnrollFaceDoc() {
     ApiResponse({
       status: 401,
       description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint quản trị viên sửa thông tin và khóa/mở khóa tài khoản người dùng
+export function ApiUpdateUserByAdminDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Sửa thông tin hoặc khóa/mở khóa tài khoản người dùng',
+      description:
+        'System Admin sửa được mọi tài khoản; Building Admin chỉ sửa cư dân thuộc tòa nhà mình. Chỉ nhận name, apartment, note và approvalStatus (ACTIVE hoặc SUSPENDED). Khóa tài khoản sẽ thu hồi phiên làm mới và chặn đăng nhập; token truy cập đang dùng còn hiệu lực tối đa 15 phút',
+    }),
+    ApiResponse({ status: 200, description: 'Cập nhật thành công' }),
+    ApiResponse({
+      status: 400,
+      description:
+        'Dữ liệu không hợp lệ, không có gì để cập nhật hoặc tự khóa chính mình',
+    }),
+    ApiResponse({ status: 401, description: 'Chưa đăng nhập' }),
+    ApiResponse({
+      status: 403,
+      description: 'Không có quyền sửa tài khoản này',
+    }),
+    ApiResponse({ status: 404, description: 'Không tìm thấy tài khoản' }),
+    ApiResponse({
+      status: 409,
+      description:
+        'Tài khoản chưa được duyệt hoặc đã bị từ chối nên không thể khóa/mở khóa',
     }),
   );
 }

@@ -11,6 +11,7 @@ import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { User, DEFAULT_AVATAR_URL } from './schemas/user.schema';
 import { Locker } from '../lockers/schemas/locker.schema';
+import { Package } from '../packages/schemas/package.schema';
 import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import {
@@ -19,6 +20,7 @@ import {
   UserProfileResponseDto,
   ChangePasswordDto,
   EnrollFaceDto,
+  UpdateUserByAdminDto,
 } from './dto';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { BuildingsService } from '../buildings/buildings.service';
@@ -26,6 +28,12 @@ import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UploadService } from '../upload/upload.service';
 import { FaceVerificationService } from '../ai/services/face-verification.service';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import {
+  ActivityCategory,
+  ActivityStatus,
+} from '../activity-logs/enums/activity-log.enums';
+import { canAccessBuilding } from '../common/utils/building-scope.util';
 
 @Injectable()
 export class UsersService {
@@ -34,11 +42,13 @@ export class UsersService {
   constructor(
     @InjectModel(User.name) private userModel: Model<User>,
     @InjectModel(Locker.name) private lockerModel: Model<Locker>,
+    @InjectModel(Package.name) private packageModel: Model<Package>,
     private buildingsService: BuildingsService,
     private mailService: MailService,
     private notificationsService: NotificationsService,
     private uploadService: UploadService,
     private faceVerificationService: FaceVerificationService,
+    private activityLogsService: ActivityLogsService,
   ) {}
 
   // Tạo mới một tài khoản người dùng vào cơ sở dữ liệu
@@ -376,6 +386,145 @@ export class UsersService {
     throw new ForbiddenException('Không có quyền truy cập');
   }
 
+  // Gắn tổng số bưu kiện của từng người dùng bằng một lần gộp nhóm duy nhất thay vì đếm theo từng dòng
+  async withPackageCounts(
+    users: User[],
+  ): Promise<(Record<string, unknown> & { packageCount: number })[]> {
+    const rows = await this.packageModel
+      .aggregate<{ _id: Types.ObjectId; count: number }>([
+        { $match: { residentId: { $in: users.map((u) => u._id) } } },
+        { $group: { _id: '$residentId', count: { $sum: 1 } } },
+      ])
+      .exec();
+    const counts = new Map(rows.map((row) => [String(row._id), row.count]));
+
+    return users.map((user) => ({
+      ...(user.toObject() as Record<string, unknown>),
+      packageCount: counts.get(String(user._id)) ?? 0,
+    }));
+  }
+
+  // Quản trị viên sửa thông tin, ghi chú hoặc khóa/mở khóa tài khoản theo phạm vi quyền; không đổi vai trò, tòa nhà, email, mật khẩu
+  async updateByAdmin(
+    id: string,
+    dto: UpdateUserByAdminDto,
+    admin: AuthenticatedUser,
+  ): Promise<User> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Mã người dùng không hợp lệ');
+    }
+
+    const target = await this.userModel.findById(id).exec();
+    if (!target) {
+      throw new NotFoundException('Không tìm thấy tài khoản người dùng');
+    }
+
+    if (admin.role === Role.BUILDING_ADMIN) {
+      if (
+        target.role !== Role.RESIDENT ||
+        !canAccessBuilding(admin, target.buildingId)
+      ) {
+        throw new ForbiddenException(
+          'Bạn chỉ có quyền sửa tài khoản cư dân thuộc tòa nhà do mình quản lý',
+        );
+      }
+    } else if (admin.role !== Role.SYSTEM_ADMIN) {
+      throw new ForbiddenException('Không có quyền thực hiện thao tác này');
+    }
+
+    const set: Record<string, unknown> = {};
+    const unset: Record<string, 1> = {};
+    const changedFields: string[] = [];
+
+    if (dto.name !== undefined) {
+      set.name = dto.name.trim();
+      changedFields.push('name');
+    }
+    if (dto.apartment !== undefined) {
+      set.apartment = dto.apartment.trim();
+      changedFields.push('apartment');
+    }
+    if (dto.note !== undefined) {
+      const note = dto.note.trim();
+      if (note) set.note = note;
+      else unset.note = 1;
+      changedFields.push('note');
+    }
+
+    let statusChange: 'SUSPEND' | 'REACTIVATE' | undefined;
+    if (
+      dto.approvalStatus !== undefined &&
+      dto.approvalStatus !== target.approvalStatus
+    ) {
+      if (String(target._id) === admin.userId) {
+        throw new BadRequestException(
+          'Không thể tự khóa hoặc mở khóa tài khoản của chính mình',
+        );
+      }
+      if (
+        target.approvalStatus !== ApprovalStatus.ACTIVE &&
+        target.approvalStatus !== ApprovalStatus.SUSPENDED
+      ) {
+        throw new ConflictException(
+          'Tài khoản chưa được duyệt hoặc đã bị từ chối, hãy dùng chức năng duyệt hoặc từ chối hồ sơ',
+        );
+      }
+
+      set.approvalStatus = dto.approvalStatus;
+      changedFields.push('approvalStatus');
+      if (dto.approvalStatus === ApprovalStatus.SUSPENDED) {
+        // Thu hồi phiên làm mới để tài khoản không đăng nhập lại được sau khi token hiện tại hết hạn
+        unset.refreshTokenHash = 1;
+        statusChange = 'SUSPEND';
+      } else {
+        statusChange = 'REACTIVATE';
+      }
+    }
+
+    if (!changedFields.length) {
+      if (dto.approvalStatus !== undefined) {
+        // Trạng thái yêu cầu trùng trạng thái hiện tại nên không có gì thay đổi
+        return (await this.findById(id)) as User;
+      }
+      throw new BadRequestException('Không có thông tin nào để cập nhật');
+    }
+
+    const updated = await this.userModel
+      .findByIdAndUpdate(
+        id,
+        {
+          ...(Object.keys(set).length ? { $set: set } : {}),
+          ...(Object.keys(unset).length ? { $unset: unset } : {}),
+        },
+        { returnDocument: 'after' },
+      )
+      .select('-password')
+      .exec();
+    if (!updated) {
+      throw new NotFoundException('Không tìm thấy tài khoản người dùng');
+    }
+
+    await this.activityLogsService.log({
+      actor: await this.activityLogsService.buildActor(admin),
+      buildingId: target.buildingId,
+      category: ActivityCategory.USER,
+      status:
+        statusChange === 'SUSPEND'
+          ? ActivityStatus.WARNING
+          : ActivityStatus.INFO,
+      title:
+        statusChange === 'SUSPEND'
+          ? 'Khóa tài khoản người dùng'
+          : statusChange === 'REACTIVATE'
+            ? 'Mở khóa tài khoản người dùng'
+            : 'Cập nhật thông tin người dùng',
+      description: `${target.name} (${target.phone}) - Trường thay đổi: ${changedFields.join(', ')}`,
+      target: { type: 'USER', id: String(target._id), label: target.name },
+    });
+
+    return updated;
+  }
+
   // Xóa tài khoản người dùng theo phạm vi phân quyền
   async removeScoped(
     id: string,
@@ -443,8 +592,14 @@ export class UsersService {
   async updateRefreshTokenHash(
     userId: string,
     refreshTokenHash: string | null,
+    touchLastActive = false,
   ): Promise<void> {
-    await this.userModel.findByIdAndUpdate(userId, { refreshTokenHash }).exec();
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        refreshTokenHash,
+        ...(touchLastActive ? { lastActiveAt: new Date() } : {}),
+      })
+      .exec();
   }
 
   // Tìm kiếm thông tin người dùng bao gồm cả mã băm Refresh Token để xác thực
