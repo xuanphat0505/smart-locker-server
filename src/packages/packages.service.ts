@@ -39,6 +39,7 @@ import {
   computeExpiredAt,
   resolveStorageLimitHours,
 } from './utils/package-expiry.util';
+import { assertTrackingNumberNotInUse, normalizeTrackingNumber } from './utils/tracking-code.util';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
 
 @Injectable()
@@ -67,9 +68,7 @@ export class PackagesService {
       .populate('buildingId', 'name code pricingPolicy');
 
     if (!locker) {
-      throw new NotFoundException(
-        `Trạm tủ với mã ${dto.lockerCode} không tồn tại`,
-      );
+      throw new NotFoundException(`Trạm tủ với mã ${dto.lockerCode} không tồn tại`);
     }
 
     const building = locker.buildingId as unknown as {
@@ -98,9 +97,7 @@ export class PackagesService {
     });
 
     if (!box) {
-      throw new NotFoundException(
-        `Ngăn tủ số ${dto.boxNumber} không tồn tại trên trạm này`,
-      );
+      throw new NotFoundException(`Ngăn tủ số ${dto.boxNumber} không tồn tại trên trạm này`);
     }
 
     if (box.status !== BoxStatus.AVAILABLE) {
@@ -122,10 +119,10 @@ export class PackagesService {
       );
     }
 
-    const pinCode = await generateUniquePinCode(
-      this.packageModel,
-      locker._id,
-    );
+    const trackingNumber = normalizeTrackingNumber(dto.trackingNumber);
+    await assertTrackingNumberNotInUse(this.packageModel, trackingNumber, targetBuildingId);
+
+    const pinCode = await generateUniquePinCode(this.packageModel, locker._id);
 
     const qrCodeToken = crypto.randomBytes(16).toString('hex');
     const droppedOffAt = new Date();
@@ -134,9 +131,7 @@ export class PackagesService {
       resolveStorageLimitHours(building?.pricingPolicy),
     );
 
-    const normalizedShipperPhone = dto.shipperPhone
-      .trim()
-      .replace(/^(\+84)/, '0');
+    const normalizedShipperPhone = dto.shipperPhone.trim().replace(/^(\+84)/, '0');
 
     // Kiểm tra trạng thái xác thực số điện thoại của tài xế và tự động gia hạn phiên (Sliding Expiration)
     let isShipperVerified = false;
@@ -169,7 +164,7 @@ export class PackagesService {
     }
 
     const newPackage = await this.packageModel.create({
-      trackingNumber: dto.trackingNumber.trim().toUpperCase(),
+      trackingNumber,
       lockerId: locker._id,
       boxId: box._id,
       boxNumber: dto.boxNumber,
@@ -232,13 +227,11 @@ export class PackagesService {
     );
 
     // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
-    this.mqttService
-      .publishDoorUnlock(locker.code, box.boxNumber)
-      .catch((err) => {
-        this.logger.error(
-          `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${box.boxNumber}: ${err}`,
-        );
-      });
+    this.mqttService.publishDoorUnlock(locker.code, box.boxNumber).catch((err) => {
+      this.logger.error(
+        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${box.boxNumber}: ${err}`,
+      );
+    });
 
     return {
       message: 'Gửi bưu kiện vào tủ thành công',
@@ -276,8 +269,7 @@ export class PackagesService {
       Date.now() - existingSession.lastResendAt.getTime() < 60 * 1000
     ) {
       const waitSeconds = Math.ceil(
-        (60 * 1000 - (Date.now() - existingSession.lastResendAt.getTime())) /
-          1000,
+        (60 * 1000 - (Date.now() - existingSession.lastResendAt.getTime())) / 1000,
       );
       throw new BadRequestException(
         `Vui lòng đợi ${waitSeconds} giây trước khi yêu cầu gửi lại mã OTP`,
@@ -322,9 +314,7 @@ export class PackagesService {
     });
 
     if (!session || !session.otp || !session.otpExpiresAt) {
-      throw new BadRequestException(
-        'Số điện thoại chưa yêu cầu gửi mã OTP hoặc phiên đã kết thúc',
-      );
+      throw new BadRequestException('Số điện thoại chưa yêu cầu gửi mã OTP hoặc phiên đã kết thúc');
     }
 
     // Chống vét cạn: Quá 5 lần sai thì hủy mã OTP
@@ -340,9 +330,7 @@ export class PackagesService {
 
     // Kiểm tra thời hạn hiệu lực của OTP
     if (new Date() > session.otpExpiresAt) {
-      throw new BadRequestException(
-        'Mã OTP đã hết hạn sử dụng. Vui lòng yêu cầu gửi lại mã mới',
-      );
+      throw new BadRequestException('Mã OTP đã hết hạn sử dụng. Vui lòng yêu cầu gửi lại mã mới');
     }
 
     // So khớp mã OTP
@@ -352,9 +340,7 @@ export class PackagesService {
         { $inc: { failedAttempts: 1 } },
       );
       const remaining = 5 - (session.failedAttempts + 1);
-      throw new BadRequestException(
-        `Mã OTP không chính xác. Bạn còn ${remaining} lần thử`,
-      );
+      throw new BadRequestException(`Mã OTP không chính xác. Bạn còn ${remaining} lần thử`);
     }
 
     // Cấp token phiên giao hàng tin cậy 60 ngày
@@ -392,9 +378,7 @@ export class PackagesService {
       const rawPhone = decodedToken.phone_number;
 
       if (!rawPhone) {
-        throw new BadRequestException(
-          'Token Firebase không chứa thông tin số điện thoại hợp lệ',
-        );
+        throw new BadRequestException('Token Firebase không chứa thông tin số điện thoại hợp lệ');
       }
 
       // Chuẩn hóa định dạng số điện thoại về 10 chữ số nội địa
@@ -435,9 +419,7 @@ export class PackagesService {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new UnauthorizedException(
-        'Mã Firebase idToken không hợp lệ hoặc đã hết hạn',
-      );
+      throw new UnauthorizedException('Mã Firebase idToken không hợp lệ hoặc đã hết hạn');
     }
   }
 
@@ -497,9 +479,7 @@ export class PackagesService {
     }
 
     if (String(pkg.residentId) !== residentId) {
-      throw new ForbiddenException(
-        'Bạn không có quyền xem kiện hàng của người khác',
-      );
+      throw new ForbiddenException('Bạn không có quyền xem kiện hàng của người khác');
     }
 
     return pkg;
@@ -516,11 +496,7 @@ export class PackagesService {
   }
 
   // Thẩm định tính hợp lệ của mã QR Token động sinh từ màn hình LCD trạm tủ
-  verifyDynamicQrToken(
-    apiKey: string,
-    stationCode: string,
-    token: string,
-  ): boolean {
+  verifyDynamicQrToken(apiKey: string, stationCode: string, token: string): boolean {
     if (!apiKey || !stationCode || !token) {
       return false;
     }
@@ -552,18 +528,12 @@ export class PackagesService {
       .select('+apiKey');
 
     if (!locker) {
-      throw new NotFoundException(
-        `Trạm tủ với mã ${dto.lockerCode} không tồn tại`,
-      );
+      throw new NotFoundException(`Trạm tủ với mã ${dto.lockerCode} không tồn tại`);
     }
 
     // Kiểm tra tính hợp lệ của mã QR Token động nếu được gửi kèm để chứng minh cự ly gần
     if (dto.qrProofToken) {
-      const isTokenValid = this.verifyDynamicQrToken(
-        locker.apiKey,
-        locker.code,
-        dto.qrProofToken,
-      );
+      const isTokenValid = this.verifyDynamicQrToken(locker.apiKey, locker.code, dto.qrProofToken);
 
       if (!isTokenValid) {
         throw new BadRequestException(
@@ -581,9 +551,7 @@ export class PackagesService {
     });
 
     if (!pkg) {
-      throw new BadRequestException(
-        'Mã OTP không chính xác hoặc bưu kiện đã được lấy trước đó',
-      );
+      throw new BadRequestException('Mã OTP không chính xác hoặc bưu kiện đã được lấy trước đó');
     }
 
     if (pkg.lockedUntil && pkg.lockedUntil > new Date()) {
@@ -610,18 +578,14 @@ export class PackagesService {
 
       // Chỉ phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR trên màn hình LCD khi thao tác trực tiếp tại Kiosk
       if (isKiosk) {
-        await this.mqttService.publishPaymentRequired(
-          locker.code,
-          pkg.boxNumber,
-          {
-            orderCode: intent.orderCode,
-            feeAmount: intent.amount,
-            qrPayload: intent.qrPayload,
-            paymentUrl: intent.paymentUrl,
-            residentName: pkg.receiverName,
-            message: paymentMessage,
-          },
-        );
+        await this.mqttService.publishPaymentRequired(locker.code, pkg.boxNumber, {
+          orderCode: intent.orderCode,
+          feeAmount: intent.amount,
+          qrPayload: intent.qrPayload,
+          paymentUrl: intent.paymentUrl,
+          residentName: pkg.receiverName,
+          message: paymentMessage,
+        });
       } else {
         this.logger.log(
           `[MOBILE_PICKUP] Cư dân thao tác nhận hàng qua Mobile App (Kiện #${String(pkg._id)}) - Bỏ qua lệnh hiển thị QR trên màn hình LCD`,
@@ -662,9 +626,7 @@ export class PackagesService {
       locker,
       boxNumber: pkg.boxNumber,
       packageId: pkg._id,
-      action: dto.qrProofToken
-        ? LockerAction.PICKUP_QR
-        : LockerAction.PICKUP_OTP,
+      action: dto.qrProofToken ? LockerAction.PICKUP_QR : LockerAction.PICKUP_OTP,
       performedBy: pkg.receiverPhone,
       status: 'SUCCESS',
       actor: {
@@ -673,19 +635,15 @@ export class PackagesService {
         phone: pkg.receiverPhone,
         role: Role.RESIDENT,
       },
-      metadata: dto.qrProofToken
-        ? { verificationMethod: 'DYNAMIC_QR' }
-        : undefined,
+      metadata: dto.qrProofToken ? { verificationMethod: 'DYNAMIC_QR' } : undefined,
     });
 
     // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
-    this.mqttService
-      .publishDoorUnlock(locker.code, pkg.boxNumber)
-      .catch((err) => {
-        this.logger.error(
-          `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
-        );
-      });
+    this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber).catch((err) => {
+      this.logger.error(
+        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
+      );
+    });
 
     return {
       message: `Xác thực mã OTP thành công. Cửa ngăn tủ số ${pkg.boxNumber} đã mở!`,
@@ -709,9 +667,7 @@ export class PackagesService {
     });
 
     if (!locker) {
-      throw new NotFoundException(
-        `Trạm tủ với mã ${dto.lockerCode} không tồn tại`,
-      );
+      throw new NotFoundException(`Trạm tủ với mã ${dto.lockerCode} không tồn tại`);
     }
 
     const pkg = await this.packageModel.findOne({
@@ -723,9 +679,7 @@ export class PackagesService {
     });
 
     if (!pkg) {
-      throw new BadRequestException(
-        'Mã QR không hợp lệ hoặc bưu kiện đã được lấy trước đó',
-      );
+      throw new BadRequestException('Mã QR không hợp lệ hoặc bưu kiện đã được lấy trước đó');
     }
 
     // Kiểm tra phí dịch vụ và tính hợp lệ của thời hạn nhận hàng
@@ -746,18 +700,14 @@ export class PackagesService {
 
       // Chỉ phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR trên màn hình LCD khi thao tác trực tiếp tại Kiosk
       if (isKiosk) {
-        await this.mqttService.publishPaymentRequired(
-          locker.code,
-          pkg.boxNumber,
-          {
-            orderCode: intent.orderCode,
-            feeAmount: intent.amount,
-            qrPayload: intent.qrPayload,
-            paymentUrl: intent.paymentUrl,
-            residentName: pkg.receiverName,
-            message: paymentMessage,
-          },
-        );
+        await this.mqttService.publishPaymentRequired(locker.code, pkg.boxNumber, {
+          orderCode: intent.orderCode,
+          feeAmount: intent.amount,
+          qrPayload: intent.qrPayload,
+          paymentUrl: intent.paymentUrl,
+          residentName: pkg.receiverName,
+          message: paymentMessage,
+        });
       } else {
         this.logger.log(
           `[MOBILE_PICKUP_QR] Cư dân thao tác nhận hàng qua Mobile App (Kiện #${String(pkg._id)}) - Bỏ qua lệnh hiển thị QR trên màn hình LCD`,
@@ -810,13 +760,11 @@ export class PackagesService {
     });
 
     // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
-    this.mqttService
-      .publishDoorUnlock(locker.code, pkg.boxNumber)
-      .catch((err) => {
-        this.logger.error(
-          `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
-        );
-      });
+    this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber).catch((err) => {
+      this.logger.error(
+        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
+      );
+    });
 
     return {
       message: `Quét mã QR thành công. Cửa ngăn tủ số ${pkg.boxNumber} đã mở!`,
@@ -834,9 +782,7 @@ export class PackagesService {
   // Nhận diện khuôn mặt cư dân trước camera trạm tủ để mở khóa lấy bưu kiện
   async pickupWithFace(dto?: PickupFaceDto, file?: Express.Multer.File) {
     if (!dto?.lockerCode) {
-      throw new BadRequestException(
-        'Vui lòng cung cấp mã trạm tủ (lockerCode)',
-      );
+      throw new BadRequestException('Vui lòng cung cấp mã trạm tủ (lockerCode)');
     }
 
     let imageBuffer: Buffer | null = null;
@@ -844,10 +790,7 @@ export class PackagesService {
     if (file?.buffer) {
       imageBuffer = file.buffer;
     } else if (dto.imageBase64) {
-      const cleanBase64 = dto.imageBase64.replace(
-        /^data:image\/\w+;base64,/,
-        '',
-      );
+      const cleanBase64 = dto.imageBase64.replace(/^data:image\/\w+;base64,/, '');
       imageBuffer = Buffer.from(cleanBase64, 'base64');
     }
 
@@ -857,10 +800,7 @@ export class PackagesService {
       );
     }
 
-    const result = await this.faceVerificationService.verifyAndUnlock(
-      dto.lockerCode,
-      imageBuffer,
-    );
+    const result = await this.faceVerificationService.verifyAndUnlock(dto.lockerCode, imageBuffer);
 
     if (result.requiresPayment) {
       return {
