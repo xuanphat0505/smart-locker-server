@@ -101,7 +101,8 @@ export function ApiCreateBuildingDoc() {
     }),
     ApiResponse({
       status: 400,
-      description: 'Dữ liệu đầu vào không hợp lệ',
+      description:
+        'Dữ liệu đầu vào không hợp lệ hoặc thiếu thông tin tài khoản ngân hàng thụ hưởng (bankBin, accountNumber, accountName)',
     }),
     ApiResponse({
       status: 401,

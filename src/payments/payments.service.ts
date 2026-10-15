@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, QueryFilter, Types } from 'mongoose';
 import { Payment, PaymentDocument } from './schemas/payment.schema';
 import { Package } from '../packages/schemas/package.schema';
 import { Building } from '../buildings/schemas/building.schema';
@@ -41,12 +41,27 @@ import {
   generateOrderCode,
 } from './utils/sepay.util';
 import { generateVietQrPayload } from './utils/vietqr.util';
+import { isPaymentConfigured } from '../buildings/utils/payment-config.util';
+import {
+  PaymentReceipt,
+  calculateRemaining,
+  emptyCredit,
+  isFullyPaid,
+  resolveTransactionId,
+  sumCredit,
+} from './utils/payment-receipt.util';
 import {
   DEFAULT_PRICING_POLICY,
   buildPricingTiers,
 } from './utils/pricing-policy.util';
 import { MqttService } from '../mqtt/mqtt.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  NotificationCategory,
+  NotificationPriority,
+  NotificationType,
+} from '../notifications/enums/notification.enums';
 import {
   ActivityCategory,
   ActivityStatus,
@@ -73,6 +88,7 @@ export class PaymentsService {
     private readonly userModel: Model<User>,
     private readonly mqttService: MqttService,
     private readonly activityLogsService: ActivityLogsService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // Tính phí 4 chặng bậc thang theo thời lượng lưu kho kể từ droppedOffAt
@@ -303,11 +319,7 @@ export class PaymentsService {
     }
 
     const building = pkg.buildingId as unknown as Building;
-    if (
-      !building?.bankAccount?.bankBin ||
-      !building?.bankAccount?.accountNumber ||
-      !building?.bankAccount?.accountName
-    ) {
+    if (!isPaymentConfigured(building)) {
       throw new BadRequestException(
         'Ban Quản Lý tòa nhà chưa cấu hình thông tin tài khoản ngân hàng thụ hưởng',
       );
@@ -322,7 +334,7 @@ export class PaymentsService {
 
     if (feeInfo.isPendingRetrieval) {
       throw new BadRequestException(
-        'Bưu kiện đã vượt quá 48 giờ và đang chờ Ban Quản Lý thu hồi về kho',
+        `Bưu kiện đã vượt quá ${feeInfo.policy.t3Hours} giờ và đang chờ Ban Quản Lý thu hồi về kho`,
       );
     }
 
@@ -376,19 +388,18 @@ export class PaymentsService {
         recipientAccount: activePendingPayment.recipientAccount,
         expiresAt: renewedExpiresAt,
         isKiosk: isKioskMode,
+        receivedAmount: activePendingPayment.receivedAmount ?? 0,
+        remainingAmount: calculateRemaining(
+          activePendingPayment.amount,
+          activePendingPayment.receivedAmount,
+        ),
       };
     }
 
-    // Hủy các đơn chờ thanh toán cũ nếu số tiền phí đã thay đổi do chuyển khung giờ
-    if (activePendingPayment) {
-      await this.paymentModel.updateMany(
-        {
-          packageId: pkg._id,
-          status: PaymentStatus.PENDING,
-        },
-        { status: PaymentStatus.CANCELLED },
-      );
-    }
+    // Hủy các đơn chờ cũ khi số tiền phí đã đổi do chuyển khung giờ và chuyển phần tiền đã nhận sang đơn mới
+    const credit = activePendingPayment
+      ? await this.cancelPendingAndCollectCredit({ packageId: pkg._id })
+      : emptyCredit();
 
     let orderCode = generateOrderCode();
     let collisionCheck = await this.paymentModel.findOne({ orderCode });
@@ -450,7 +461,10 @@ export class PaymentsService {
       qrPayload,
       description,
       expiresAt,
+      receivedAmount: credit.receivedAmount,
+      receipts: credit.receipts,
     });
+    const alreadyPaid = await this.settleIfFullyPaid(payment);
 
     const checkoutFormFields = initSepayOneTimePaymentFields({
       orderCode,
@@ -473,6 +487,9 @@ export class PaymentsService {
       recipientAccount: payment.recipientAccount,
       expiresAt: payment.expiresAt,
       isKiosk: payment.isKiosk ?? false,
+      receivedAmount: payment.receivedAmount ?? 0,
+      remainingAmount: calculateRemaining(payment.amount, payment.receivedAmount),
+      alreadyPaid,
     };
   }
 
@@ -502,11 +519,7 @@ export class PaymentsService {
       throw new NotFoundException('Không tìm thấy thông tin tòa nhà');
     }
 
-    if (
-      !building?.bankAccount?.bankBin ||
-      !building?.bankAccount?.accountNumber ||
-      !building?.bankAccount?.accountName
-    ) {
+    if (!isPaymentConfigured(building)) {
       throw new BadRequestException(
         'Ban Quản Lý tòa nhà chưa cấu hình thông tin tài khoản ngân hàng thụ hưởng',
       );
@@ -561,17 +574,13 @@ export class PaymentsService {
       };
     }
 
-    // Hủy các đơn chờ thanh toán cũ nếu biểu phí gói tháng có sự thay đổi
-    if (activePending) {
-      await this.paymentModel.updateMany(
-        {
+    // Hủy các đơn chờ cũ nếu biểu phí gói tháng đổi và chuyển phần tiền đã nhận sang đơn mới
+    const credit = activePending
+      ? await this.cancelPendingAndCollectCredit({
           userId: user._id,
           paymentType: PaymentType.MONTHLY_SUBSCRIPTION,
-          status: PaymentStatus.PENDING,
-        },
-        { status: PaymentStatus.CANCELLED },
-      );
-    }
+        })
+      : emptyCredit();
 
     let orderCode = generateOrderCode();
     let collisionCheck = await this.paymentModel.findOne({ orderCode });
@@ -628,7 +637,10 @@ export class PaymentsService {
       qrPayload,
       description,
       expiresAt,
+      receivedAmount: credit.receivedAmount,
+      receipts: credit.receipts,
     });
+    const alreadyPaid = await this.settleIfFullyPaid(payment);
 
     const checkoutFormFields = initSepayOneTimePaymentFields({
       orderCode,
@@ -650,6 +662,9 @@ export class PaymentsService {
       qrPayload: payment.qrPayload,
       recipientAccount: payment.recipientAccount,
       expiresAt: payment.expiresAt,
+      receivedAmount: payment.receivedAmount ?? 0,
+      remainingAmount: calculateRemaining(payment.amount, payment.receivedAmount),
+      alreadyPaid,
     };
   }
 
@@ -941,10 +956,11 @@ export class PaymentsService {
     return payment;
   }
 
-  // Ghi nhật ký khoản thanh toán vừa được gạch nợ; số tiền nhận ít hơn số phải nộp được đánh dấu cảnh báo
+  // Ghi nhật ký khoản tiền vừa nhận; chưa đủ hoặc chuyển dư đều được đánh dấu cảnh báo để Ban Quản Lý đối soát
   private async logPaymentReceived(
     payment: PaymentDocument,
-    transferAmount: number,
+    receivedNow: number,
+    outcome: 'PARTIAL' | 'PAID',
   ): Promise<void> {
     const resident = payment.userId
       ? await this.userModel
@@ -952,13 +968,21 @@ export class PaymentsService {
           .select('name phone')
           .lean()
       : null;
-    const underpaid = transferAmount > 0 && transferAmount < payment.amount;
+    const received = payment.receivedAmount ?? 0;
+    const overpaid = outcome === 'PAID' && received > payment.amount;
     const title =
       payment.paymentType === PaymentType.MONTHLY_SUBSCRIPTION
         ? 'Thanh toán gói tháng'
         : payment.isKiosk
           ? 'Thanh toán phí lưu kho tại Kiosk'
           : 'Thanh toán phí lưu kho từ xa';
+
+    let description = `Đơn #${payment.orderCode} - ${payment.amount} VNĐ`;
+    if (outcome === 'PARTIAL') {
+      description = `Đơn #${payment.orderCode} - vừa nhận ${receivedNow} VNĐ, đã nhận ${received}/${payment.amount} VNĐ, còn thiếu ${calculateRemaining(payment.amount, received)} VNĐ`;
+    } else if (overpaid) {
+      description = `Đơn #${payment.orderCode} - nhận ${received} VNĐ, nhiều hơn ${payment.amount} VNĐ cần nộp (chuyển dư ${received - payment.amount} VNĐ)`;
+    }
 
     await this.activityLogsService.log({
       actor: {
@@ -969,21 +993,98 @@ export class PaymentsService {
       },
       buildingId: payment.buildingId,
       category: ActivityCategory.PAYMENT,
-      status: underpaid ? ActivityStatus.WARNING : ActivityStatus.SUCCESS,
-      title,
-      description: underpaid
-        ? `Đơn #${payment.orderCode} - nhận ${transferAmount} VNĐ, thấp hơn ${payment.amount} VNĐ cần nộp`
-        : `Đơn #${payment.orderCode} - ${payment.amount} VNĐ`,
+      status:
+        outcome === 'PARTIAL' || overpaid
+          ? ActivityStatus.WARNING
+          : ActivityStatus.SUCCESS,
+      title: outcome === 'PARTIAL' ? `${title} (chưa đủ tiền)` : title,
+      description,
       target: payment.packageId
         ? { type: 'PACKAGE', id: String(payment.packageId) }
         : { type: 'USER', id: String(payment.userId) },
       metadata: {
         orderCode: payment.orderCode,
         amount: payment.amount,
+        receivedAmount: received,
         paymentType: payment.paymentType,
         isKiosk: payment.isKiosk ?? false,
       },
     });
+  }
+
+  // Báo cho cư dân biết đã nhận bao nhiêu, còn thiếu bao nhiêu và phải chuyển thêm với cùng nội dung chuyển khoản
+  private async notifyPartialPayment(payment: PaymentDocument): Promise<void> {
+    if (!payment.userId) return;
+    const received = payment.receivedAmount ?? 0;
+    const remaining = calculateRemaining(payment.amount, received);
+    const format = (value: number) => value.toLocaleString('vi-VN');
+
+    await this.notificationsService
+      .createNotification({
+        recipientId: payment.userId,
+        buildingId: payment.buildingId,
+        title: 'Chuyển khoản chưa đủ số tiền',
+        message: `Đơn #${payment.orderCode} đã nhận ${format(received)} VNĐ, còn thiếu ${format(remaining)} VNĐ. Vui lòng chuyển thêm với cùng nội dung chuyển khoản${payment.description ? ` "${payment.description}"` : ''}.`,
+        category: NotificationCategory.SYSTEM,
+        type: NotificationType.PAYMENT_PARTIAL,
+        priority: NotificationPriority.HIGH,
+        metadata: {
+          orderCode: payment.orderCode,
+          receivedAmount: received,
+          remainingAmount: remaining,
+        },
+      })
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `Không gửi được thông báo chuyển thiếu cho đơn #${payment.orderCode}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+  }
+
+  // Hủy các đơn chờ thanh toán sắp bị thay thế và gom phần tiền đã nhận của chúng để chuyển sang đơn mới
+  private async cancelPendingAndCollectCredit(
+    filter: QueryFilter<PaymentDocument>,
+  ): Promise<{ receivedAmount: number; receipts: PaymentReceipt[] }> {
+    const pendingFilter: QueryFilter<PaymentDocument> = {
+      ...filter,
+      status: PaymentStatus.PENDING,
+    };
+    const pendings = await this.paymentModel
+      .find(pendingFilter)
+      .select('receivedAmount receipts')
+      .lean();
+
+    await this.paymentModel.updateMany(pendingFilter, {
+      status: PaymentStatus.CANCELLED,
+    });
+
+    return sumCredit(pendings);
+  }
+
+  // Chốt đơn thành PAID ngay khi phần tiền chuyển sang đã đủ, vì sẽ không còn webhook nào để chốt
+  private async settleIfFullyPaid(payment: PaymentDocument): Promise<boolean> {
+    if (!isFullyPaid(payment.amount, payment.receivedAmount)) return false;
+
+    const paid = await this.paymentModel.findOneAndUpdate(
+      {
+        _id: payment._id,
+        status: PaymentStatus.PENDING,
+        receivedAmount: { $gte: payment.amount },
+      },
+      {
+        $set: {
+          status: PaymentStatus.PAID,
+          paidAt: new Date(),
+          paymentMethod: PaymentMethod.SEPAY,
+        },
+      },
+      { new: true },
+    );
+    if (!paid) return false;
+
+    await this.logPaymentReceived(paid, 0, 'PAID');
+    await this.completePaidPayment(paid, paid.orderCode);
+    return true;
   }
 
   // Xử lý dữ liệu webhook từ SePay để tự động gạch nợ và phân nhánh nghiệp vụ an toàn
@@ -1063,33 +1164,49 @@ export class PaymentsService {
       };
     }
 
-    const payment = await this.paymentModel.findOneAndUpdate(
+    const { transactionId, isDedupable } = resolveTransactionId({
+      sepayTransactionId,
+      referenceCode,
+    });
+    if (!isDedupable) {
+      this.logger.warn(
+        `[SEPAY_WEBHOOK] Giao dịch cho đơn #${orderCode} không có mã giao dịch, không thể chống tính trùng nếu cổng gửi lại`,
+      );
+    }
+    const receivedNow = Number.isFinite(transferAmount)
+      ? Math.max(0, transferAmount)
+      : 0;
+    const isGatewayConfirmed = isPgIpn;
+
+    // Bước 1: ghi nhận khoản tiền vào đơn, bỏ qua nếu mã giao dịch này đã được tính trước đó
+    const recorded = await this.paymentModel.findOneAndUpdate(
       {
         orderCode,
         status: PaymentStatus.PENDING,
+        'receipts.transactionId': { $ne: transactionId },
       },
       {
-        $set: {
-          status: PaymentStatus.PAID,
-          sepayTransactionId: sepayTransactionId || String(orderCode),
-          referenceCode: referenceCode,
-          paidAt: new Date(),
-          paymentMethod: PaymentMethod.SEPAY,
-          rawTransactionData: dto,
+        $push: {
+          receipts: { transactionId, amount: receivedNow, receivedAt: new Date() },
         },
+        $inc: { receivedAmount: receivedNow },
+        $set: { rawTransactionData: dto },
       },
       { new: true },
     );
 
-    if (!payment) {
-      const alreadyPaid = await this.paymentModel.findOne({
+    if (!recorded) {
+      const alreadyHandled = await this.paymentModel.exists({
         orderCode,
-        status: PaymentStatus.PAID,
+        $or: [
+          { status: PaymentStatus.PAID },
+          { 'receipts.transactionId': transactionId },
+        ],
       });
 
-      if (alreadyPaid) {
+      if (alreadyHandled) {
         this.logger.log(
-          `[SEPAY_WEBHOOK] Giao dịch #${orderCode} đã được gạch nợ trước đó (Idempotent)`,
+          `[SEPAY_WEBHOOK] Giao dịch #${orderCode} đã được ghi nhận trước đó (Idempotent)`,
         );
         return {
           success: true,
@@ -1107,14 +1224,72 @@ export class PaymentsService {
       };
     }
 
-    if (transferAmount > 0 && transferAmount < payment.amount) {
+    // Bước 2: chỉ chốt PAID khi đã đủ tiền; cổng thanh toán PG đã tự đảm bảo số tiền nên luôn được chốt
+    if (
+      !isGatewayConfirmed &&
+      !isFullyPaid(recorded.amount, recorded.receivedAmount)
+    ) {
       this.logger.warn(
-        `[SEPAY_WEBHOOK] Giao dịch #${orderCode} nhận được ${transferAmount} VNĐ, ít hơn số tiền cần nộp ${payment.amount} VNĐ`,
+        `[SEPAY_WEBHOOK] Giao dịch #${orderCode} chưa đủ tiền: đã nhận ${recorded.receivedAmount}/${recorded.amount} VNĐ, giữ đơn ở trạng thái PENDING`,
       );
+      await this.logPaymentReceived(recorded, receivedNow, 'PARTIAL');
+      await this.notifyPartialPayment(recorded);
+
+      return {
+        success: true,
+        partial: true,
+        message: 'Đã nhận một phần số tiền, đơn chưa được chốt',
+        orderCode,
+        receivedAmount: recorded.receivedAmount,
+        remainingAmount: calculateRemaining(
+          recorded.amount,
+          recorded.receivedAmount,
+        ),
+      };
     }
 
-    await this.logPaymentReceived(payment, transferAmount);
+    const payment = await this.paymentModel.findOneAndUpdate(
+      {
+        _id: recorded._id,
+        status: PaymentStatus.PENDING,
+        ...(isGatewayConfirmed
+          ? {}
+          : { receivedAmount: { $gte: recorded.amount } }),
+      },
+      {
+        $set: {
+          status: PaymentStatus.PAID,
+          sepayTransactionId: sepayTransactionId || String(orderCode),
+          referenceCode: referenceCode,
+          paidAt: new Date(),
+          paymentMethod: PaymentMethod.SEPAY,
+        },
+        $max: { receivedAmount: recorded.amount },
+      },
+      { new: true },
+    );
 
+    if (!payment) {
+      this.logger.log(
+        `[SEPAY_WEBHOOK] Giao dịch #${orderCode} đã được xử lý bởi một webhook khác (Idempotent)`,
+      );
+      return {
+        success: true,
+        message: 'Giao dịch đã được ghi nhận thành công trước đó',
+        alreadyProcessed: true,
+      };
+    }
+
+    await this.logPaymentReceived(payment, receivedNow, 'PAID');
+
+    return this.completePaidPayment(payment, orderCode);
+  }
+
+  // Xử lý nghiệp vụ sau khi đơn đã đủ tiền: kích hoạt gói tháng, mở tủ tại Kiosk hoặc gia hạn lưu kho từ xa
+  private async completePaidPayment(
+    payment: PaymentDocument,
+    orderCode: number,
+  ) {
     if (payment.paymentType === PaymentType.MONTHLY_SUBSCRIPTION) {
       const user = await this.userModel.findById(payment.userId);
       if (user) {
@@ -1239,6 +1414,8 @@ export class PaymentsService {
       paidUntil,
       boxNumber: payment.boxNumber,
       isKiosk: payment.isKiosk ?? false,
+      receivedAmount: payment.receivedAmount ?? 0,
+      remainingAmount: calculateRemaining(payment.amount, payment.receivedAmount),
     };
   }
 }

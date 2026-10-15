@@ -66,10 +66,10 @@ export class Building extends Document {
   // Thông tin tài khoản ngân hàng thụ hưởng của Ban Quản Lý tòa nhà
   @Prop(
     raw({
-      bankBin: { type: String, required: false },
+      bankBin: { type: String, required: true, trim: true },
       bankName: { type: String, required: false },
-      accountNumber: { type: String, required: false },
-      accountName: { type: String, required: false },
+      accountNumber: { type: String, required: true, trim: true },
+      accountName: { type: String, required: true, trim: true },
     }),
   )
   bankAccount?: {

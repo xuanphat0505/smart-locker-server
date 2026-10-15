@@ -1,8 +1,14 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import {
+  ApiProperty,
+  ApiPropertyOptional,
+  OmitType,
+  PartialType,
+} from '@nestjs/swagger';
 import {
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsNotEmptyObject,
   IsNumber,
   IsOptional,
   IsString,
@@ -12,6 +18,44 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BuildingStatus } from '../enums/building-status.enum';
+
+// DTO thông tin tài khoản ngân hàng thụ hưởng của Ban Quản Lý
+export class BankAccountDto {
+  @ApiProperty({
+    example: '970422',
+    description: 'Mã BIN ngân hàng thụ hưởng chuẩn NAPAS (vd: 970422 - MBBank)',
+  })
+  @IsString({ message: 'Mã BIN ngân hàng phải là chuỗi ký tự' })
+  @IsNotEmpty({ message: 'Mã BIN ngân hàng không được để trống' })
+  bankBin: string;
+
+  @ApiPropertyOptional({
+    example: 'MBBank',
+    description: 'Tên ngân hàng thụ hưởng',
+  })
+  @IsOptional()
+  @IsString({ message: 'Tên ngân hàng phải là chuỗi ký tự' })
+  bankName?: string;
+
+  @ApiProperty({
+    example: '0123456789',
+    description: 'Số tài khoản ngân hàng thụ hưởng của Ban Quản Lý',
+  })
+  @IsString({ message: 'Số tài khoản phải là chuỗi ký tự' })
+  @IsNotEmpty({ message: 'Số tài khoản không được để trống' })
+  accountNumber: string;
+
+  @ApiProperty({
+    example: 'BQL CHUNG CU TECCO TOWER',
+    description: 'Tên chủ tài khoản thụ hưởng',
+  })
+  @IsString({ message: 'Tên chủ tài khoản phải là chuỗi ký tự' })
+  @IsNotEmpty({ message: 'Tên chủ tài khoản không được để trống' })
+  accountName: string;
+}
+
+// DTO cập nhật tài khoản ngân hàng: trường nào gửi lên thì không được để trống, trường không gửi thì giữ nguyên
+export class UpdateBankAccountDto extends PartialType(BankAccountDto) {}
 
 // DTO khởi tạo Tòa Nhà mới do System Admin thực hiện
 export class CreateBuildingDto {
@@ -100,41 +144,19 @@ export class CreateBuildingDto {
   @IsOptional()
   @IsString({ message: 'Email quản lý phải là chuỗi ký tự' })
   managementEmail?: string;
-}
 
-// DTO thông tin tài khoản ngân hàng thụ hưởng của Ban Quản Lý
-export class BankAccountDto {
-  @ApiPropertyOptional({
-    example: '970422',
-    description: 'Mã BIN ngân hàng thụ hưởng chuẩn NAPAS (vd: 970422 - MBBank)',
+  @ApiProperty({
+    type: () => BankAccountDto,
+    description:
+      'Tài khoản ngân hàng nhận tiền của Ban Quản Lý, bắt buộc để tòa nhà thu được phí lưu kho',
   })
-  @IsOptional()
-  @IsString({ message: 'Mã BIN ngân hàng phải là chuỗi ký tự' })
-  bankBin?: string;
-
-  @ApiPropertyOptional({
-    example: 'MBBank',
-    description: 'Tên ngân hàng thụ hưởng',
-  })
-  @IsOptional()
-  @IsString({ message: 'Tên ngân hàng phải là chuỗi ký tự' })
-  bankName?: string;
-
-  @ApiPropertyOptional({
-    example: '0123456789',
-    description: 'Số tài khoản ngân hàng thụ hưởng của Ban Quản Lý',
-  })
-  @IsOptional()
-  @IsString({ message: 'Số tài khoản phải là chuỗi ký tự' })
-  accountNumber?: string;
-
-  @ApiPropertyOptional({
-    example: 'BQL CHUNG CU TECCO TOWER',
-    description: 'Tên chủ tài khoản thụ hưởng',
-  })
-  @IsOptional()
-  @IsString({ message: 'Tên chủ tài khoản phải là chuỗi ký tự' })
-  accountName?: string;
+  @IsNotEmptyObject(
+    {},
+    { message: 'Phải cung cấp thông tin tài khoản ngân hàng thụ hưởng' },
+  )
+  @ValidateNested()
+  @Type(() => BankAccountDto)
+  bankAccount: BankAccountDto;
 }
 
 // DTO cấu hình biểu phí 4 chặng của tòa nhà
@@ -221,15 +243,18 @@ export class PricingPolicyDto {
 }
 
 // DTO cập nhật thông tin Tòa Nhà
-export class UpdateBuildingDto extends PartialType(CreateBuildingDto) {
+export class UpdateBuildingDto extends PartialType(
+  OmitType(CreateBuildingDto, ['bankAccount'] as const),
+) {
   @ApiPropertyOptional({
-    type: () => BankAccountDto,
-    description: 'Thông tin tài khoản ngân hàng thụ hưởng của Ban Quản Lý',
+    type: () => UpdateBankAccountDto,
+    description:
+      'Thông tin tài khoản ngân hàng thụ hưởng của Ban Quản Lý; trường nào gửi lên không được để trống',
   })
   @IsOptional()
   @ValidateNested()
-  @Type(() => BankAccountDto)
-  bankAccount?: BankAccountDto;
+  @Type(() => UpdateBankAccountDto)
+  bankAccount?: UpdateBankAccountDto;
 
   @ApiPropertyOptional({
     type: () => PricingPolicyDto,
