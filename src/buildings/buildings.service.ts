@@ -8,6 +8,12 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Building } from './schemas/building.schema';
 import { User } from '../users/schemas/user.schema';
+import { Package } from '../packages/schemas/package.schema';
+import { PackageStatus } from '../packages/enums/package.enums';
+import {
+  buildOverdueFilter,
+  resolveStorageLimitHours,
+} from '../packages/utils/package-expiry.util';
 import {
   CreateBuildingDto,
   UpdateBuildingDto,
@@ -50,6 +56,7 @@ export class BuildingsService {
   constructor(
     @InjectModel(Building.name) private buildingModel: Model<Building>,
     @InjectModel(User.name) private userModel: Model<User>,
+    @InjectModel(Package.name) private packageModel: Model<Package>,
     private readonly activityLogsService: ActivityLogsService,
   ) {}
 
@@ -237,7 +244,11 @@ export class BuildingsService {
     }
 
     const updated = await this.buildingModel
-      .findByIdAndUpdate(id, { $set: updatePayload }, { new: true })
+      .findByIdAndUpdate(
+        id,
+        { $set: updatePayload },
+        { new: true, runValidators: true },
+      )
       .exec();
 
     if (!updated) {
@@ -245,6 +256,14 @@ export class BuildingsService {
         'Không tìm thấy thông tin tòa nhà để cập nhật',
       );
     }
+
+    // Khi mốc T3 đổi, đồng bộ lại hạn lưu kho của các kiện đang chờ để trạng thái quá hạn luôn khớp biểu phí
+    const previousLimit = resolveStorageLimitHours(current.pricingPolicy);
+    const nextLimit = resolveStorageLimitHours(updated.pricingPolicy);
+    const syncedPackages =
+      pricingPolicy && previousLimit !== nextLimit
+        ? await this.syncPackageExpiry(updated._id, nextLimit)
+        : null;
 
     if (actor) {
       // Chỉ ghi tên các trường đã đổi, không ghi giá trị để không lộ số tài khoản ngân hàng
@@ -257,9 +276,60 @@ export class BuildingsService {
         description: `${updated.name} - Trường thay đổi: ${Object.keys(dto).join(', ')}`,
         target: { type: 'BUILDING', id: String(updated._id), label: updated.name },
       });
+
+      if (syncedPackages) {
+        await this.activityLogsService.log({
+          actor: await this.activityLogsService.buildActor(actor),
+          buildingId: updated._id,
+          category: ActivityCategory.SETTINGS,
+          status: ActivityStatus.INFO,
+          title: 'Đồng bộ hạn lưu kho theo mốc T3 mới',
+          description: `${updated.name} - Mốc T3 ${previousLimit} giờ thành ${nextLimit} giờ: cập nhật ${syncedPackages.resynced} kiện, đưa ${syncedPackages.restored} kiện về chờ lấy, chuyển ${syncedPackages.markedOverdue} kiện sang quá hạn`,
+          target: { type: 'BUILDING', id: String(updated._id), label: updated.name },
+        });
+      }
     }
 
     return updated;
+  }
+
+  // Tính lại hạn lưu kho (droppedOffAt + T3) của các kiện đang trong tủ và đưa trạng thái quá hạn về đúng theo mốc mới
+  private async syncPackageExpiry(
+    buildingId: Types.ObjectId,
+    storageLimitHours: number,
+  ): Promise<{ resynced: number; restored: number; markedOverdue: number }> {
+    const inLocker = {
+      buildingId,
+      status: {
+        $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
+      },
+    };
+
+    const resynced = await this.packageModel.updateMany(inLocker, [
+      {
+        $set: {
+          expiredAt: {
+            $add: ['$droppedOffAt', storageLimitHours * 60 * 60 * 1000],
+          },
+        },
+      },
+    ]);
+
+    const now = new Date();
+    const restored = await this.packageModel.updateMany(
+      { buildingId, status: PackageStatus.OVERDUE, expiredAt: { $gt: now } },
+      { $set: { status: PackageStatus.WAITING_FOR_PICKUP } },
+    );
+    const markedOverdue = await this.packageModel.updateMany(
+      { buildingId, ...buildOverdueFilter(now) },
+      { $set: { status: PackageStatus.OVERDUE } },
+    );
+
+    return {
+      resynced: resynced.modifiedCount,
+      restored: restored.modifiedCount,
+      markedOverdue: markedOverdue.modifiedCount,
+    };
   }
 
   // Lấy thông tin tòa nhà của Ban Quản Lý đang đăng nhập

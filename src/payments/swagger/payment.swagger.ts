@@ -76,7 +76,7 @@ export function ApiGetPaymentStatusDoc() {
       summary:
         'Tra cứu trạng thái thanh toán phục vụ Auto-Polling từ Mobile App (yêu cầu JWT của chủ giao dịch, Ban Quản Lý cùng tòa nhà hoặc System Admin; trả 403 với người khác)',
       description:
-        'Endpoint phản hồi nhanh và gọn nhẹ giúp Client định kỳ 2 giây kiểm tra trạng thái PAID để tự động đóng modal hoặc bung cửa tủ',
+        'Endpoint phản hồi nhanh và gọn nhẹ giúp Client định kỳ 2 giây kiểm tra trạng thái PAID để tự động đóng modal hoặc bung cửa tủ. Khi cư dân chuyển thiếu tiền, đơn vẫn PENDING và phản hồi kèm receivedAmount (đã nhận) cùng remainingAmount (còn thiếu)',
     }),
     ApiParam({
       name: 'orderCode',

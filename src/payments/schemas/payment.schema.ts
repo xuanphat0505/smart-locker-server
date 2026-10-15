@@ -108,6 +108,24 @@ export class Payment extends Document {
     accountName?: string;
   };
 
+  // Tổng số tiền đã nhận cho đơn này; đơn chỉ được chốt PAID khi giá trị này đạt số phải nộp
+  @Prop({ default: 0, min: 0 })
+  receivedAmount: number;
+
+  // Từng khoản tiền đã nhận, dùng chống tính trùng khi cổng thanh toán gửi lại cùng một giao dịch
+  @Prop({
+    type: [
+      {
+        _id: false,
+        transactionId: { type: String, required: true },
+        amount: { type: Number, required: true, min: 0 },
+        receivedAt: { type: Date, required: true },
+      },
+    ],
+    default: [],
+  })
+  receipts: { transactionId: string; amount: number; receivedAt: Date }[];
+
   // Trạng thái của phiên giao dịch
   @Prop({
     type: String,

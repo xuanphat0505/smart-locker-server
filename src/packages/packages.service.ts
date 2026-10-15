@@ -34,6 +34,11 @@ import { PaymentsService } from '../payments/payments.service';
 import { PaymentType } from '../payments/enums/payment.enums';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { generateUniquePinCode } from './utils/pin-code.util';
+import {
+  buildOverdueFilter,
+  computeExpiredAt,
+  resolveStorageLimitHours,
+} from './utils/package-expiry.util';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
 
 @Injectable()
@@ -59,7 +64,7 @@ export class PackagesService {
     const formattedLockerCode = dto.lockerCode.trim().toUpperCase();
     const locker = await this.lockerModel
       .findOne({ code: formattedLockerCode })
-      .populate('buildingId', 'name code');
+      .populate('buildingId', 'name code pricingPolicy');
 
     if (!locker) {
       throw new NotFoundException(
@@ -70,6 +75,7 @@ export class PackagesService {
     const building = locker.buildingId as unknown as {
       _id: Types.ObjectId;
       name?: string;
+      pricingPolicy?: { t3Hours?: number };
     };
     const targetBuildingId = building?._id || locker.buildingId;
 
@@ -123,7 +129,10 @@ export class PackagesService {
 
     const qrCodeToken = crypto.randomBytes(16).toString('hex');
     const droppedOffAt = new Date();
-    const expiredAt = new Date(droppedOffAt.getTime() + 48 * 60 * 60 * 1000);
+    const expiredAt = computeExpiredAt(
+      droppedOffAt,
+      resolveStorageLimitHours(building?.pricingPolicy),
+    );
 
     const normalizedShipperPhone = dto.shipperPhone
       .trim()
@@ -893,20 +902,11 @@ export class PackagesService {
     };
   }
 
-  // Tác vụ nền tự động kiểm tra và chuyển các đơn hàng quá 48 giờ sang trạng thái quá hạn
+  // Tác vụ nền tự động chuyển các đơn hàng quá hạn lưu kho của tòa nhà (mốc T3) sang trạng thái quá hạn
   @Cron(CronExpression.EVERY_HOUR)
   async handleOverduePackagesCron(): Promise<void> {
-    const now = new Date();
     const result = await this.packageModel.updateMany(
-      {
-        status: PackageStatus.WAITING_FOR_PICKUP,
-        expiredAt: { $lt: now },
-        $or: [
-          { paidUntil: { $exists: false } },
-          { paidUntil: null },
-          { paidUntil: { $lte: now } },
-        ],
-      },
+      buildOverdueFilter(new Date()),
       {
         $set: { status: PackageStatus.OVERDUE },
       },
