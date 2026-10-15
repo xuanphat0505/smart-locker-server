@@ -28,6 +28,11 @@ export function ApiDropOffPackageDoc() {
       status: 404,
       description: 'Trạm tủ hoặc thông tin cư dân không tồn tại',
     }),
+    ApiResponse({
+      status: 409,
+      description:
+        'Mã vận đơn đang có kiện chờ lấy hoặc quá hạn trong cùng tòa nhà, không cho gửi trùng',
+    }),
   );
 }
 
