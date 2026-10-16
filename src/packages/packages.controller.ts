@@ -39,6 +39,7 @@ import {
   ApiGetMyPackagesDoc,
   ApiGetPackageByIdDoc,
   ApiGetQrTokenDoc,
+  ApiGetDepositStatusDoc,
   ApiPickupOtpDoc,
   ApiPickupQrDoc,
   ApiPickupFaceDoc,
@@ -146,6 +147,16 @@ export class PackagesController {
   @ApiGetMyPackagesDoc()
   async getMyPackages(@Request() req: { user: AuthenticatedUser }) {
     return this.packagesService.getMyPackages(req.user.userId);
+  }
+
+  // Tài xế tra cứu kết quả lượt gửi hàng bằng mã xác nhận nhận được lúc mở tủ, không cần tài khoản
+  @Get(':id/deposit-status')
+  @ApiGetDepositStatusDoc()
+  async getDepositStatus(
+    @Param('id') id: string,
+    @Headers('x-deposit-token') depositToken?: string,
+  ) {
+    return this.packagesService.getDepositStatus(id, depositToken);
   }
 
   // Lấy mã QR Token động phục vụ hiển thị mã QR trên app cho cư dân quét

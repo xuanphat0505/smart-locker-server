@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as mqtt from 'mqtt';
+import { Subject } from 'rxjs';
 import { Locker } from '../lockers/schemas/locker.schema';
 import { LockerStatus } from '../lockers/enums';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
@@ -30,11 +31,24 @@ interface MqttStatusPayload {
   uptimeSec?: number;
 }
 
+// Sự kiện cảm biến của một ngăn tủ được phát nội bộ cho các dịch vụ khác theo dõi mà không phụ thuộc ngược vào MqttService
+export interface SensorEvent {
+  lockerCode: string;
+  boxNumber: number;
+  event: string;
+  doorStatus: 'OPEN' | 'CLOSED';
+  hasItem: boolean;
+  at: number;
+}
+
 @Injectable()
 export class MqttService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MqttService.name);
   private client: mqtt.MqttClient | null = null;
   private isConnected = false;
+
+  // Luồng sự kiện cảm biến nội bộ, các dịch vụ nghiệp vụ đăng ký lắng nghe để phản ứng với phần cứng
+  readonly sensorEvents$ = new Subject<SensorEvent>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -245,6 +259,18 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
             hasItem,
             timestamp: Date.now(),
           });
+
+          // Phát bản tin cảm biến cho các dịch vụ nội bộ; bản tin ngoại tuyến không mang trạng thái cảm biến nên bỏ qua
+          if (event !== 'OFFLINE' && boxNumber > 0) {
+            this.sensorEvents$.next({
+              lockerCode,
+              boxNumber,
+              event,
+              doorStatus,
+              hasItem,
+              at: Date.now(),
+            });
+          }
         }
       }
     } catch (e) {

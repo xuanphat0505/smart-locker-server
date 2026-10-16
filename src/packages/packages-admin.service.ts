@@ -68,7 +68,10 @@ export class PackagesAdminService {
 
     const scope = resolveBuildingScope(user, query.buildingId);
     if (scope) filter.buildingId = scope;
-    if (query.status) filter.status = query.status;
+    // Mặc định ẩn kiện đang chờ đặt hàng và lượt gửi đã hủy, chỉ hiện khi lọc đúng trạng thái đó
+    filter.status = query.status ?? {
+      $nin: [PackageStatus.PENDING_DEPOSIT, PackageStatus.DEPOSIT_CANCELLED],
+    };
     if (query.lockerId) filter.lockerId = new Types.ObjectId(query.lockerId);
 
     const term = query.search?.trim();
