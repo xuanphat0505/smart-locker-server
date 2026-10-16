@@ -5,20 +5,26 @@ import {
   ApiParam,
   ApiConsumes,
   ApiBody,
+  ApiHeader,
 } from '@nestjs/swagger';
 
 // Tài liệu Swagger cho endpoint tài xế gửi bưu kiện vào ngăn tủ
 export function ApiDropOffPackageDoc() {
   return applyDecorators(
     ApiOperation({
-      summary: 'Tài xế gửi bưu kiện vào ngăn tủ (Không cần tài khoản)',
+      summary: 'Tài xế bắt đầu gửi bưu kiện vào ngăn tủ (Không cần tài khoản)',
       description:
-        'API công khai cho phép tài xế gửi hàng sau khi quét mã QR trạm tủ, hệ thống khóa Box, sinh OTP 6 số và gửi thông báo tới cư dân',
+        'API công khai cho phép tài xế gửi hàng sau khi quét mã QR trạm tủ. Hệ thống giữ chỗ ngăn, phát lệnh mở cửa và tạo kiện ở trạng thái PENDING_DEPOSIT, kèm depositToken (chỉ trả một lần). Kiện chỉ chuyển sang WAITING_FOR_PICKUP và cư dân chỉ được thông báo khi cảm biến xác nhận hàng đã nằm trong ngăn và cửa đã đóng; quá hạn chờ thì tự hủy hoặc xác nhận theo trạng thái cảm biến',
     }),
     ApiResponse({
       status: 201,
       description:
-        'Gửi hàng vào tủ thành công, lệnh mở cửa ngăn tủ đã được phát',
+        'Đã giữ chỗ và phát lệnh mở cửa ngăn tủ, chờ cảm biến xác nhận hàng đã được đặt vào',
+    }),
+    ApiResponse({
+      status: 409,
+      description:
+        'Ngăn vừa được người khác giữ, mã vận đơn đang có kiện, hoặc cảm biến báo ngăn đang có vật',
     }),
     ApiResponse({
       status: 400,
@@ -310,5 +316,25 @@ export function ApiResendOtpDoc() {
       description: 'Bưu kiện không còn nằm trong ngăn tủ',
     }),
     ApiResponse({ status: 429, description: 'Cấp lại OTP quá thường xuyên' }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint tài xế tra cứu kết quả lượt gửi hàng
+export function ApiGetDepositStatusDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Tài xế tra cứu kết quả lượt gửi hàng bằng mã xác nhận',
+      description:
+        'Trả trạng thái lượt gửi (PENDING_DEPOSIT, WAITING_FOR_PICKUP, DEPOSIT_CANCELLED) kèm tiến độ cảm biến. Chỉ trả thông tin kiện và OTP khi lượt gửi đã được xác nhận và trong thời gian ngắn sau đó',
+    }),
+    ApiParam({ name: 'id', description: 'Mã kiện hàng nhận được khi mở tủ' }),
+    ApiHeader({
+      name: 'x-deposit-token',
+      description: 'Mã xác nhận lượt gửi (depositToken) nhận được khi mở tủ',
+      required: true,
+    }),
+    ApiResponse({ status: 200, description: 'Tra cứu thành công' }),
+    ApiResponse({ status: 403, description: 'Mã xác nhận không hợp lệ' }),
+    ApiResponse({ status: 404, description: 'Kiện hàng không tồn tại' }),
   );
 }

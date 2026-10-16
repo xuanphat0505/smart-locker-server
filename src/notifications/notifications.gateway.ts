@@ -18,7 +18,7 @@ import { Logger } from '@nestjs/common';
   namespace: '/notifications',
 })
 export class NotificationsGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
+  implements OnGatewayConnection, OnGatewayDisconnect 
 {
   @WebSocketServer()
   server: Server;
@@ -184,6 +184,25 @@ export class NotificationsGateway
 
     this.server.to(buildingRoom).emit('RESIDENT_APPROVAL_RESULT', eventPayload);
     this.server.to(residentRoom).emit('RESIDENT_APPROVAL_RESULT', eventPayload);
+  }
+
+  // Báo kết quả lượt gửi hàng (đã xác nhận hoặc bị hủy) tới các client đang theo dõi trạm; không kèm OTP vì phòng này không xác thực
+  notifyDepositResult(
+    lockerCode: string,
+    payload: {
+      packageId: string;
+      boxNumber: number;
+      status: 'CONFIRMED' | 'CANCELLED';
+      reason?: string;
+    },
+  ): void {
+    const roomName = `locker_${lockerCode.trim().toUpperCase()}`;
+    const eventName = payload.status === 'CONFIRMED' ? 'DEPOSIT_CONFIRMED' : 'DEPOSIT_CANCELLED';
+    this.server.to(roomName).emit(eventName, {
+      lockerCode: lockerCode.trim().toUpperCase(),
+      ...payload,
+      timestamp: Date.now(),
+    });
   }
 
   // Báo tức thì cho cư dân đang mở ứng dụng rằng tài khoản vừa bị tạm khóa

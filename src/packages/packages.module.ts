@@ -9,6 +9,7 @@ import {
 import { Locker, LockerSchema } from '../lockers/schemas/locker.schema';
 import { Box, BoxSchema } from '../lockers/schemas/box.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { Building, BuildingSchema } from '../buildings/schemas/building.schema';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MqttModule } from '../mqtt/mqtt.module';
 import { AuthModule } from '../auth/auth.module';
@@ -19,6 +20,7 @@ import { PickupAuthGuard } from '../auth/guards/pickup-auth.guard';
 import { PackagesController } from './packages.controller';
 import { PackagesService } from './packages.service';
 import { PackagesAdminService } from './packages-admin.service';
+import { DepositWatcherService } from './deposit-watcher.service';
 
 @Module({
   imports: [
@@ -28,6 +30,7 @@ import { PackagesAdminService } from './packages-admin.service';
       { name: Locker.name, schema: LockerSchema },
       { name: Box.name, schema: BoxSchema },
       { name: User.name, schema: UserSchema },
+      { name: Building.name, schema: BuildingSchema },
     ]),
     AuthModule,
     NotificationsModule,
@@ -37,7 +40,12 @@ import { PackagesAdminService } from './packages-admin.service';
     ActivityLogsModule,
   ],
   controllers: [PackagesController],
-  providers: [PackagesService, PackagesAdminService, PickupAuthGuard],
+  providers: [
+    PackagesService,
+    PackagesAdminService,
+    DepositWatcherService,
+    PickupAuthGuard,
+  ],
   exports: [PackagesService],
 })
 export class PackagesModule {}

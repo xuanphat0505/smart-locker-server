@@ -1,5 +1,6 @@
 import {
   Injectable,
+  ConflictException,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
@@ -40,6 +41,17 @@ import {
   resolveStorageLimitHours,
 } from './utils/package-expiry.util';
 import { assertTrackingNumberNotInUse, normalizeTrackingNumber } from './utils/tracking-code.util';
+import {
+  DEPOSIT_TTL_MS,
+  DROP_OFF_UNLOCK_MS,
+  isSensorReportingItem,
+} from './utils/deposit-decision.util';
+import {
+  DEPOSIT_RESULT_WINDOW_MS,
+  generateDepositToken,
+  hashDepositToken,
+  verifyDepositToken,
+} from './utils/deposit-token.util';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
 
 @Injectable()
@@ -60,7 +72,7 @@ export class PackagesService {
     private readonly activityLogsService: ActivityLogsService,
   ) {}
 
-  // Tài xế giao bưu kiện vào ngăn tủ và sinh mã OTP mở tủ cho cư dân
+  // Tài xế bắt đầu gửi hàng: giữ chỗ ngăn tủ, mở khóa và tạo kiện ở trạng thái chờ đặt hàng; kiện chỉ được ghi nhận và báo cho cư dân khi cảm biến xác nhận hàng đã nằm trong ngăn
   async dropOff(dto: DropOffPackageDto) {
     const formattedLockerCode = dto.lockerCode.trim().toUpperCase();
     const locker = await this.lockerModel
@@ -119,6 +131,24 @@ export class PackagesService {
       );
     }
 
+    // Ngăn được ghi nhận trống nhưng cảm biến vừa báo có vật thì không cho gửi chồng, cần người vận hành kiểm tra
+    if (
+      isSensorReportingItem(
+        box.lastSensor
+          ? {
+              doorStatus: box.lastSensor.doorStatus,
+              hasItem: box.lastSensor.hasItem,
+              at: new Date(box.lastSensor.at).getTime(),
+            }
+          : null,
+        Date.now(),
+      )
+    ) {
+      throw new ConflictException(
+        `Cảm biến báo ngăn số ${dto.boxNumber} đang có vật bên trong, vui lòng chọn ngăn khác hoặc báo Ban Quản Lý kiểm tra`,
+      );
+    }
+
     const trackingNumber = normalizeTrackingNumber(dto.trackingNumber);
     await assertTrackingNumberNotInUse(this.packageModel, trackingNumber, targetBuildingId);
 
@@ -163,78 +193,80 @@ export class PackagesService {
       }
     }
 
-    const newPackage = await this.packageModel.create({
-      trackingNumber,
-      lockerId: locker._id,
-      boxId: box._id,
-      boxNumber: dto.boxNumber,
-      boxSize: dto.boxSize,
-      buildingId: targetBuildingId,
-      residentId: resident._id,
-      receiverPhone: resident.phone,
-      receiverName: resident.name,
-      apartment: resident.apartment || '',
-      shipperPhone: normalizedShipperPhone,
-      shipperName: dto.shipperName?.trim(),
-      isShipperVerified,
-      carrierName: dto.carrierName.trim(),
-      pinCode,
-      qrCodeToken,
-      status: PackageStatus.WAITING_FOR_PICKUP,
-      droppedOffAt,
-      expiredAt,
-      note: dto.note?.trim(),
-    });
-
-    box.status = BoxStatus.OCCUPIED;
-    box.currentPackageId = newPackage._id;
-    box.doorStatus = DoorStatus.OPEN;
-    box.hasItem = true;
-    await box.save();
-
-    await this.activityLogsService.recordLockerAction({
-      locker,
-      boxNumber: dto.boxNumber,
-      packageId: newPackage._id,
-      action: LockerAction.DROP_OFF,
-      performedBy: normalizedShipperPhone,
-      status: 'SUCCESS',
-      actor: {
-        name: dto.shipperName?.trim() || normalizedShipperPhone,
-        phone: normalizedShipperPhone,
-        role: Role.SHIPPER,
-      },
-      metadata: {
-        carrierName: dto.carrierName,
-        trackingNumber: dto.trackingNumber,
-        isShipperVerified,
-      },
-    });
-
-    await this.notificationsService.notifyPackageDropOff(
-      String(resident._id),
-      String(targetBuildingId),
+    // Giữ chỗ ngăn bằng cập nhật có điều kiện để hai tài xế chọn cùng một ngăn thì chỉ một người giữ được
+    const claimedBox = await this.boxModel.findOneAndUpdate(
+      { _id: box._id, status: BoxStatus.AVAILABLE },
       {
-        id: String(newPackage._id),
-        trackingNumber: newPackage.trackingNumber,
-        boxNumber: newPackage.boxNumber,
-        lockerName: locker.name,
-        lockerCode: locker.code,
-        pinCode: newPackage.pinCode,
-        carrierName: newPackage.carrierName,
-        droppedOffAt: newPackage.droppedOffAt,
+        $set: {
+          status: BoxStatus.OCCUPIED,
+          doorStatus: DoorStatus.OPEN,
+          hasItem: false,
+        },
       },
+      { returnDocument: 'after' },
+    );
+    if (!claimedBox) {
+      throw new ConflictException(
+        `Ngăn tủ số ${dto.boxNumber} vừa được người khác sử dụng, vui lòng chọn ngăn khác`,
+      );
+    }
+
+    const depositToken = generateDepositToken();
+    const depositExpiresAt = new Date(droppedOffAt.getTime() + DEPOSIT_TTL_MS);
+
+    let newPackage;
+    try {
+      newPackage = await this.packageModel.create({
+        trackingNumber,
+        lockerId: locker._id,
+        boxId: box._id,
+        boxNumber: dto.boxNumber,
+        boxSize: dto.boxSize,
+        buildingId: targetBuildingId,
+        residentId: resident._id,
+        receiverPhone: resident.phone,
+        receiverName: resident.name,
+        apartment: resident.apartment || '',
+        shipperPhone: normalizedShipperPhone,
+        shipperName: dto.shipperName?.trim(),
+        isShipperVerified,
+        carrierName: dto.carrierName.trim(),
+        pinCode,
+        qrCodeToken,
+        status: PackageStatus.PENDING_DEPOSIT,
+        droppedOffAt,
+        expiredAt,
+        depositTokenHash: hashDepositToken(depositToken),
+        depositUnlockedAt: droppedOffAt,
+        depositExpiresAt,
+        note: dto.note?.trim(),
+      });
+    } catch (error) {
+      // Tạo kiện thất bại thì trả ngăn về trống để không giữ chỗ vô ích
+      await this.boxModel.updateOne(
+        { _id: box._id },
+        { $set: { status: BoxStatus.AVAILABLE, hasItem: false } },
+      );
+      throw error;
+    }
+
+    await this.boxModel.updateOne(
+      { _id: box._id },
+      { $set: { currentPackageId: newPackage._id } },
     );
 
-    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
-    this.mqttService.publishDoorUnlock(locker.code, box.boxNumber).catch((err) => {
-      this.logger.error(
-        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${box.boxNumber}: ${err}`,
-      );
-    });
+    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT; thời gian mở dài hơn lúc nhận hàng để tài xế kịp kéo cửa
+    this.mqttService
+      .publishDoorUnlock(locker.code, box.boxNumber, DROP_OFF_UNLOCK_MS)
+      .catch((err) => {
+        this.logger.error(
+          `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${box.boxNumber}: ${err}`,
+        );
+      });
 
     return {
-      message: 'Gửi bưu kiện vào tủ thành công',
+      message:
+        'Đã mở ngăn tủ, vui lòng đặt hàng vào và đóng cửa để hoàn tất. Kiện chỉ được ghi nhận khi cảm biến xác nhận',
       package: {
         _id: String(newPackage._id),
         trackingNumber: newPackage.trackingNumber,
@@ -248,10 +280,58 @@ export class PackagesService {
         droppedOffAt: newPackage.droppedOffAt,
         expiredAt: newPackage.expiredAt,
       },
+      depositToken,
+      depositExpiresAt,
       action: {
         command: 'OPEN_DOOR',
         boxNumber: newPackage.boxNumber,
       },
+    };
+  }
+
+  // Tra cứu kết quả lượt gửi bằng mã xác nhận của tài xế; chỉ trả OTP sau khi đã được cảm biến xác nhận và trong thời gian ngắn
+  async getDepositStatus(id: string, depositToken?: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Mã kiện hàng không hợp lệ');
+    }
+
+    const pkg = await this.packageModel
+      .findById(id)
+      .select('+depositTokenHash');
+    if (!pkg) {
+      throw new NotFoundException('Kiện hàng không tồn tại trong hệ thống');
+    }
+    if (!verifyDepositToken(depositToken, pkg.depositTokenHash)) {
+      throw new ForbiddenException('Mã xác nhận lượt gửi không hợp lệ');
+    }
+
+    const confirmedRecently =
+      pkg.status === PackageStatus.WAITING_FOR_PICKUP &&
+      pkg.depositConfirmedAt &&
+      Date.now() - pkg.depositConfirmedAt.getTime() <= DEPOSIT_RESULT_WINDOW_MS;
+
+    return {
+      packageId: String(pkg._id),
+      status: pkg.status,
+      doorOpened: Boolean(pkg.depositDoorOpenedAt),
+      depositExpiresAt: pkg.depositExpiresAt,
+      cancelReason: pkg.depositCancelReason,
+      package: confirmedRecently
+        ? {
+            _id: String(pkg._id),
+            trackingNumber: pkg.trackingNumber,
+            receiverName: pkg.receiverName,
+            receiverPhone: pkg.receiverPhone,
+            apartment: pkg.apartment,
+            boxNumber: pkg.boxNumber,
+            boxSize: pkg.boxSize,
+            pinCode: pkg.pinCode,
+            shipperName: pkg.shipperName,
+            status: pkg.status,
+            droppedOffAt: pkg.droppedOffAt,
+            expiredAt: pkg.expiredAt,
+          }
+        : undefined,
     };
   }
 
@@ -430,7 +510,12 @@ export class PackagesService {
     }
 
     const packages = await this.packageModel
-      .find({ residentId: new Types.ObjectId(residentId) })
+      .find({
+        residentId: new Types.ObjectId(residentId),
+        status: {
+          $nin: [PackageStatus.PENDING_DEPOSIT, PackageStatus.DEPOSIT_CANCELLED],
+        },
+      })
       .sort({ createdAt: -1 })
       .populate('lockerId', 'name code locationDescription');
 

@@ -111,6 +111,30 @@ export class Package extends Document {
   @Prop({ required: false })
   lockedUntil?: Date;
 
+  // Băm của mã xác nhận lượt gửi, giúp tài xế khách tra cứu kết quả mà không cần tài khoản
+  @Prop({ required: false, select: false })
+  depositTokenHash?: string;
+
+  // Thời điểm phát lệnh mở khóa cho lượt gửi hàng đang chờ xác nhận
+  @Prop({ required: false })
+  depositUnlockedAt?: Date;
+
+  // Hạn chót chờ cảm biến xác nhận đã đặt hàng, quá hạn thì được xử lý theo trạng thái cảm biến
+  @Prop({ required: false, index: true })
+  depositExpiresAt?: Date;
+
+  // Thời điểm cảm biến báo cánh cửa đã được mở ra trong lượt gửi
+  @Prop({ required: false })
+  depositDoorOpenedAt?: Date;
+
+  // Thời điểm cảm biến xác nhận hàng đã nằm trong ngăn và cửa đã đóng
+  @Prop({ required: false })
+  depositConfirmedAt?: Date;
+
+  // Lý do lượt gửi bị hủy, phục vụ truy vết
+  @Prop({ required: false })
+  depositCancelReason?: string;
+
   // Trạng thái vòng đời hiện tại của bưu kiện
   @Prop({
     type: String,

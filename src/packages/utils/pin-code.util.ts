@@ -17,7 +17,11 @@ export async function generateUniquePinCode(
       lockerId,
       pinCode,
       status: {
-        $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
+        $in: [
+          PackageStatus.PENDING_DEPOSIT,
+          PackageStatus.WAITING_FOR_PICKUP,
+          PackageStatus.OVERDUE,
+        ],
       },
       ...(excludePackageId ? { _id: { $ne: excludePackageId } } : {}),
     });

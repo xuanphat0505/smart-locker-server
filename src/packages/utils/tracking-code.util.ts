@@ -8,7 +8,7 @@ export function normalizeTrackingNumber(trackingNumber: string): string {
   return trackingNumber.trim().toUpperCase();
 }
 
-// Chặn gửi trùng: không cho gửi mã vận đơn đang có kiện chờ lấy hoặc quá hạn trong cùng tòa nhà
+// Chặn gửi trùng: không cho gửi mã vận đơn đang có kiện chờ đặt hàng, chờ lấy hoặc quá hạn trong cùng tòa nhà
 export async function assertTrackingNumberNotInUse(
   packageModel: Model<Package>,
   trackingNumber: string,
@@ -18,7 +18,11 @@ export async function assertTrackingNumberNotInUse(
     trackingNumber,
     buildingId,
     status: {
-      $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
+      $in: [
+        PackageStatus.PENDING_DEPOSIT,
+        PackageStatus.WAITING_FOR_PICKUP,
+        PackageStatus.OVERDUE,
+      ],
     },
   });
 

@@ -1,4 +1,4 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Prop, Schema, SchemaFactory, raw } from '@nestjs/mongoose';
 import { Document, Types, Schema as MongooseSchema } from 'mongoose';
 import { BoxSize, BoxStatus, DoorStatus } from '../enums';
 
@@ -54,6 +54,20 @@ export class Box extends Document {
     required: false,
   })
   currentPackageId?: Types.ObjectId;
+
+  // Ảnh chụp cảm biến mới nhất do trạm tủ báo về, dùng đối chiếu khi xác nhận lượt gửi hàng
+  @Prop(
+    raw({
+      doorStatus: { type: String, enum: DoorStatus },
+      hasItem: { type: Boolean },
+      at: { type: Date },
+    }),
+  )
+  lastSensor?: {
+    doorStatus: DoorStatus;
+    hasItem: boolean;
+    at: Date;
+  };
 }
 
 export const BoxSchema = SchemaFactory.createForClass(Box);

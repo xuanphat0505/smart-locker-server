@@ -283,6 +283,25 @@ export class NotificationsService {
     }
   }
 
+  // Phát kết quả lượt gửi hàng qua WebSocket; lỗi phát sự kiện không được làm hỏng việc xác nhận hoặc hủy
+  notifyDepositResult(
+    lockerCode: string,
+    payload: {
+      packageId: string;
+      boxNumber: number;
+      status: 'CONFIRMED' | 'CANCELLED';
+      reason?: string;
+    },
+  ): void {
+    try {
+      this.notificationsGateway.notifyDepositResult(lockerCode, payload);
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi phát kết quả lượt gửi hàng: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   // Phát sự kiện tạm khóa tài khoản qua WebSocket; lỗi phát sự kiện không được làm hỏng thao tác khóa
   notifyAccountSuspended(residentId: string): void {
     try {
