@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import type { ShipperNameStatus } from '../utils/shipper-name.util';
 
 export type ShipperSessionDocument = HydratedDocument<ShipperSession>;
 
@@ -25,6 +26,14 @@ export class ShipperSession {
   // Thời điểm xác thực thành công gần nhất
   @Prop()
   verifiedAt?: Date;
+
+  // Họ tên tài xế gắn với số điện thoại đã xác thực
+  @Prop({ trim: true })
+  name?: string;
+
+  // Độ tin cậy của tên: tự khai khi mới nhập, đã duyệt khi Ban Quản Lý xác nhận
+  @Prop({ type: String, enum: ['SELF_DECLARED', 'APPROVED'], default: 'SELF_DECLARED' })
+  nameStatus?: ShipperNameStatus;
 
   // Token phiên giao hàng tin cậy cấp cho thiết bị của tài xế
   @Prop({ index: true })

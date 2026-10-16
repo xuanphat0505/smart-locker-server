@@ -179,6 +179,15 @@ export class VerifyShipperOtpDto {
   @Length(6, 6, { message: 'Mã OTP xác thực phải gồm đúng 6 chữ số' })
   @IsNotEmpty()
   otp: string;
+
+  @ApiProperty({
+    example: 'Trần Văn B',
+    description: 'Họ tên tài xế, được gắn với số điện thoại đã xác thực',
+  })
+  @IsString()
+  @IsNotEmpty({ message: 'Họ tên tài xế không được để trống' })
+  @Length(2, 60, { message: 'Họ tên tài xế phải từ 2 đến 60 ký tự' })
+  name: string;
 }
 
 // DTO xác minh token trả về từ Google Firebase sau khi tài xế xác thực OTP thành công
@@ -191,6 +200,15 @@ export class VerifyFirebaseTokenDto {
   @IsString()
   @IsNotEmpty({ message: 'Firebase idToken không được để trống' })
   idToken: string;
+
+  @ApiProperty({
+    example: 'Trần Văn B',
+    description: 'Họ tên tài xế, được gắn với số điện thoại đã xác thực',
+  })
+  @IsString()
+  @IsNotEmpty({ message: 'Họ tên tài xế không được để trống' })
+  @Length(2, 60, { message: 'Họ tên tài xế phải từ 2 đến 60 ký tự' })
+  name: string;
 }
 
 // DTO nhận diện khuôn mặt tại trạm tủ để mở khóa lấy bưu kiện
