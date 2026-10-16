@@ -35,6 +35,7 @@ import { PaymentsService } from '../payments/payments.service';
 import { PaymentType } from '../payments/enums/payment.enums';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { generateUniquePinCode } from './utils/pin-code.util';
+import { normalizeShipperName, resolveSessionName } from './utils/shipper-name.util';
 import {
   buildOverdueFilter,
   computeExpiredAt,
@@ -165,6 +166,7 @@ export class PackagesService {
 
     // Kiểm tra trạng thái xác thực số điện thoại của tài xế và tự động gia hạn phiên (Sliding Expiration)
     let isShipperVerified = false;
+    let verifiedShipperName: string | undefined;
     const rollingExpiresAt = new Date(
       Date.now() + 60 * 24 * 60 * 60 * 1000, // Gia hạn thêm 60 ngày kể từ lần gửi này
     );
@@ -177,19 +179,9 @@ export class PackagesService {
       });
       if (validSession) {
         isShipperVerified = true;
+        verifiedShipperName = validSession.name;
         validSession.sessionExpiresAt = rollingExpiresAt;
         await validSession.save();
-      }
-    } else {
-      const existingVerified = await this.shipperSessionModel.findOne({
-        phone: normalizedShipperPhone,
-        isVerified: true,
-        sessionExpiresAt: { $gt: new Date() },
-      });
-      if (existingVerified) {
-        isShipperVerified = true;
-        existingVerified.sessionExpiresAt = rollingExpiresAt;
-        await existingVerified.save();
       }
     }
 
@@ -228,7 +220,10 @@ export class PackagesService {
         receiverName: resident.name,
         apartment: resident.apartment || '',
         shipperPhone: normalizedShipperPhone,
-        shipperName: dto.shipperName?.trim(),
+        // Tài xế đã xác thực thì dùng tên gắn với phiên, không tin tên do client gửi theo từng đơn
+        shipperName:
+          verifiedShipperName ||
+          (dto.shipperName ? normalizeShipperName(dto.shipperName) : undefined),
         isShipperVerified,
         carrierName: dto.carrierName.trim(),
         pinCode,
@@ -427,6 +422,9 @@ export class PackagesService {
     const sessionToken = `shp_sess_${crypto.randomBytes(24).toString('hex')}`;
     const sessionExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
 
+    const resolvedName = resolveSessionName(session, dto.name);
+    session.name = resolvedName.name;
+    session.nameStatus = resolvedName.nameStatus;
     session.isVerified = true;
     session.verifiedAt = new Date();
     session.sessionToken = sessionToken;
@@ -445,6 +443,8 @@ export class PackagesService {
       message: 'Xác thực số điện thoại tài xế thành công',
       sessionToken,
       phone: normalizedPhone,
+      name: resolvedName.name,
+      nameStatus: resolvedName.nameStatus,
       expiresAt: sessionExpiresAt,
     };
   }
@@ -468,10 +468,17 @@ export class PackagesService {
       const sessionToken = `shp_sess_${crypto.randomBytes(24).toString('hex')}`;
       const sessionExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
 
+      const existingSession = await this.shipperSessionModel.findOne({
+        phone: normalizedPhone,
+      });
+      const resolvedName = resolveSessionName(existingSession ?? {}, dto.name);
+
       await this.shipperSessionModel.findOneAndUpdate(
         { phone: normalizedPhone },
         {
           phone: normalizedPhone,
+          name: resolvedName.name,
+          nameStatus: resolvedName.nameStatus,
           isVerified: true,
           verifiedAt: new Date(),
           sessionToken,
@@ -492,6 +499,8 @@ export class PackagesService {
         message: 'Xác thực số điện thoại tài xế thành công qua Firebase',
         sessionToken,
         phone: normalizedPhone,
+        name: resolvedName.name,
+        nameStatus: resolvedName.nameStatus,
         expiresAt: sessionExpiresAt,
       };
     } catch (error) {
