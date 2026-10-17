@@ -10,6 +10,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as crypto from 'crypto';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Package, ShipperSession } from './schemas';
 import { Locker } from '../lockers/schemas/locker.schema';
@@ -54,6 +55,18 @@ import {
   verifyDepositToken,
 } from './utils/deposit-token.util';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
+import { SmsService } from '../sms/sms.service';
+import { toE164Vn } from '../sms/utils/phone.util';
+import {
+  OTP_MAX_SENDS_PER_HOUR,
+  OTP_RESEND_INTERVAL_MS,
+  OTP_SEND_WINDOW_MS,
+  OTP_TTL_MS,
+  buildOtpMessage,
+  generateOtp,
+  hashOtp,
+  verifyOtp,
+} from './utils/otp.util';
 
 @Injectable()
 export class PackagesService {
@@ -71,7 +84,18 @@ export class PackagesService {
     private readonly faceVerificationService: FaceVerificationService,
     private readonly paymentsService: PaymentsService,
     private readonly activityLogsService: ActivityLogsService,
+    private readonly smsService: SmsService,
+    private readonly configService: ConfigService,
   ) {}
+
+  // Khóa bí mật dùng để băm mã OTP, ưu tiên khóa riêng và dự phòng bằng khóa JWT
+  private getOtpSecret(): string {
+    return (
+      this.configService.get<string>('OTP_HASH_SECRET') ||
+      this.configService.get<string>('JWT_ACCESS_SECRET_KEY') ||
+      ''
+    );
+  }
 
   // Tài xế bắt đầu gửi hàng: giữ chỗ ngăn tủ, mở khóa và tạo kiện ở trạng thái chờ đặt hàng; kiện chỉ được ghi nhận và báo cho cư dân khi cảm biến xác nhận hàng đã nằm trong ngăn
   async dropOff(dto: DropOffPackageDto) {
@@ -334,48 +358,61 @@ export class PackagesService {
   async sendShipperOtp(dto: SendShipperOtpDto) {
     const normalizedPhone = dto.phone.trim().replace(/^(\+84)/, '0');
 
-    // Giới hạn tần suất gửi lại mã OTP tối thiểu 60 giây
     const existingSession = await this.shipperSessionModel.findOne({
       phone: normalizedPhone,
     });
+    const now = Date.now();
 
+    // Giới hạn tần suất gửi lại mã OTP tối thiểu 60 giây
     if (
       existingSession?.lastResendAt &&
-      Date.now() - existingSession.lastResendAt.getTime() < 60 * 1000
+      now - existingSession.lastResendAt.getTime() < OTP_RESEND_INTERVAL_MS
     ) {
       const waitSeconds = Math.ceil(
-        (60 * 1000 - (Date.now() - existingSession.lastResendAt.getTime())) / 1000,
+        (OTP_RESEND_INTERVAL_MS - (now - existingSession.lastResendAt.getTime())) / 1000,
       );
       throw new BadRequestException(
         `Vui lòng đợi ${waitSeconds} giây trước khi yêu cầu gửi lại mã OTP`,
       );
     }
 
-    // Sinh mã OTP 6 chữ số ngẫu nhiên
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpiresAt = new Date(Date.now() + 3 * 60 * 1000);
+    // Giới hạn số tin nhắn gửi tới mỗi số trong một giờ để tránh bị lợi dụng làm tốn cước SMS
+    const windowStartedAt = existingSession?.sendWindowStartedAt;
+    const isWindowActive =
+      !!windowStartedAt && now - windowStartedAt.getTime() < OTP_SEND_WINDOW_MS;
+    const sendCount = isWindowActive ? (existingSession?.sendCount ?? 0) : 0;
+    if (sendCount >= OTP_MAX_SENDS_PER_HOUR) {
+      throw new BadRequestException(
+        'Bạn đã yêu cầu mã OTP quá nhiều lần, vui lòng thử lại sau 1 giờ',
+      );
+    }
+
+    // Gửi SMS trước khi lưu: nếu cổng SMS lỗi thì không có mã nào còn hiệu lực
+    const otp = generateOtp();
+    await this.smsService.send(toE164Vn(normalizedPhone), buildOtpMessage(otp));
 
     await this.shipperSessionModel.findOneAndUpdate(
       { phone: normalizedPhone },
       {
         phone: normalizedPhone,
-        otp,
-        otpExpiresAt,
+        otp: hashOtp(normalizedPhone, otp, this.getOtpSecret()),
+        otpExpiresAt: new Date(now + OTP_TTL_MS),
         failedAttempts: 0,
-        lastResendAt: new Date(),
+        lastResendAt: new Date(now),
+        sendCount: sendCount + 1,
+        sendWindowStartedAt: isWindowActive ? windowStartedAt : new Date(now),
       },
       { upsert: true, returnDocument: 'after' },
     );
 
-    this.logger.log(
-      `[SMS_GATEWAY] Đã gửi mã OTP ${otp} tới số điện thoại tài xế ${normalizedPhone}`,
-    );
+    this.logger.log(`[SMS_OTP] Đã gửi mã xác thực tới tài xế ${normalizedPhone}`);
 
     return {
       success: true,
-      message: `Đã gửi mã xác thực 6 số qua SMS/Zalo tới ${normalizedPhone}`,
-      expiresInSeconds: 180,
-      devOtp: otp,
+      message: `Đã gửi mã xác thực 6 số qua SMS tới ${normalizedPhone}`,
+      expiresInSeconds: OTP_TTL_MS / 1000,
+      // Chỉ trả mã về khi bật chế độ thử nghiệm để phục vụ demo
+      ...(this.smsService.devMode ? { devOtp: otp } : {}),
     };
   }
 
@@ -409,7 +446,7 @@ export class PackagesService {
     }
 
     // So khớp mã OTP
-    if (session.otp !== inputOtp) {
+    if (!verifyOtp(normalizedPhone, inputOtp, session.otp, this.getOtpSecret())) {
       await this.shipperSessionModel.updateOne(
         { phone: normalizedPhone },
         { $inc: { failedAttempts: 1 } },

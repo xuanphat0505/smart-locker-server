@@ -210,7 +210,7 @@ export function ApiSendShipperOtpDoc() {
     ApiOperation({
       summary: 'Gửi mã xác thực OTP 6 số tới số điện thoại của tài xế',
       description:
-        'API công khai gửi mã OTP 6 số (hiệu lực 3 phút) qua SMS/Zalo để xác minh SIM chính chủ của tài xế',
+        'API công khai gửi mã OTP 6 số (hiệu lực 3 phút) qua SMS để xác minh SIM chính chủ của tài xế. Mã chỉ được trả về trong trường devOtp khi máy chủ bật SMS_DEV_MODE',
     }),
     ApiResponse({
       status: 200,
@@ -218,7 +218,12 @@ export function ApiSendShipperOtpDoc() {
     }),
     ApiResponse({
       status: 400,
-      description: 'Số điện thoại không hợp lệ hoặc gửi lại quá nhanh (< 60s)',
+      description:
+        'Số điện thoại không hợp lệ, gửi lại quá nhanh (< 60s) hoặc vượt 5 lần mỗi giờ',
+    }),
+    ApiResponse({
+      status: 502,
+      description: 'Cổng gửi SMS không phản hồi hoặc từ chối, mã OTP không được lưu',
     }),
   );
 }
