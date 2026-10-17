@@ -16,6 +16,7 @@ import { AuthModule } from '../auth/auth.module';
 import { AiModule } from '../ai/ai.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
+import { SmsModule } from '../sms/sms.module';
 import { PickupAuthGuard } from '../auth/guards/pickup-auth.guard';
 import { PackagesController } from './packages.controller';
 import { PackagesService } from './packages.service';
@@ -38,6 +39,7 @@ import { DepositWatcherService } from './deposit-watcher.service';
     AiModule,
     PaymentsModule,
     ActivityLogsModule,
+    SmsModule,
   ],
   controllers: [PackagesController],
   providers: [

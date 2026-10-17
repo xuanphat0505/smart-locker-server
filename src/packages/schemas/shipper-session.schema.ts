@@ -50,6 +50,14 @@ export class ShipperSession {
   // Thời điểm gần nhất yêu cầu gửi mã OTP phục vụ giới hạn tần suất gửi lại
   @Prop()
   lastResendAt?: Date;
+
+  // Số lần đã gửi OTP trong khung thời gian hiện tại, dùng để giới hạn số tin nhắn mỗi giờ
+  @Prop({ default: 0 })
+  sendCount?: number;
+
+  // Thời điểm bắt đầu khung giới hạn gửi OTP hiện tại
+  @Prop()
+  sendWindowStartedAt?: Date;
 }
 
 export const ShipperSessionSchema =
