@@ -28,7 +28,7 @@ export function verifyOtp(
   return candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
 }
 
-// Nội dung tin nhắn OTP không dấu để vừa một tin SMS
+// Nội dung tin nhắn OTP
 export function buildOtpMessage(otp: string): string {
-  return `Smart Locker: Ma xac thuc cua ban la ${otp}. Het han sau 3 phut. Khong chia se ma nay cho bat ky ai.`;
+  return `${otp} là mã xác thực Smart Locker. Hết hạn sau 3 phút. Không chia sẻ.`;
 }
