@@ -60,7 +60,7 @@ export class PricingTierDto {
     enum: ['FREE', 'TIER_1', 'TIER_2', 'RETRIEVAL'],
     example: 'TIER_1',
     description:
-      'Chặng phí: FREE khi giờ lưu kho <= T1, TIER_1 khi <= T2, TIER_2 khi < T3, RETRIEVAL khi >= T3',
+      'Chặng phí: FREE khi giờ lưu kho còn trong thời gian miễn phí, TIER_1 khi <= T2, TIER_2 khi < T3, RETRIEVAL khi >= T3',
   })
   tier: 'FREE' | 'TIER_1' | 'TIER_2' | 'RETRIEVAL';
 
@@ -86,8 +86,14 @@ export class PricingPolicyResponseDto {
   @ApiProperty({ example: 30000 })
   monthlySubscriptionFee: number;
 
-  @ApiProperty({ example: 5000 })
+  @ApiProperty({ example: 0 })
   perUseFee: number;
+
+  @ApiProperty({
+    example: 24,
+    description: 'Số giờ lưu kho đầu tiên miễn phí cho cư dân có gói tháng',
+  })
+  subscriberFreeHours: number;
 
   @ApiProperty({ example: 12 })
   t1Hours: number;

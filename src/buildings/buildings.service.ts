@@ -220,7 +220,8 @@ export class BuildingsService {
     // Hợp nhất an toàn và kiểm tra tính hợp lý của biểu phí 4 chặng
     if (pricingPolicy) {
       const mergedPolicy = {
-        ...(current.pricingPolicy || DEFAULT_PRICING_POLICY),
+        ...DEFAULT_PRICING_POLICY,
+        ...(current.pricingPolicy || {}),
         ...pricingPolicy,
       };
 
@@ -238,6 +239,15 @@ export class BuildingsService {
         mergedPolicy.t2Hours >= mergedPolicy.t3Hours
       ) {
         throw new BadRequestException('Mốc thời lượng T2 phải nhỏ hơn T3');
+      }
+
+      if (
+        mergedPolicy.subscriberFreeHours < mergedPolicy.t1Hours ||
+        mergedPolicy.subscriberFreeHours > mergedPolicy.t3Hours
+      ) {
+        throw new BadRequestException(
+          'Thời gian miễn phí của gói tháng phải nằm trong khoảng từ T1 đến T3',
+        );
       }
 
       updatePayload.pricingPolicy = mergedPolicy;

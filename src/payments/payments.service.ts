@@ -51,9 +51,10 @@ import {
   sumCredit,
 } from './utils/payment-receipt.util';
 import {
-  DEFAULT_PRICING_POLICY,
   buildPricingTiers,
+  mergePricingPolicy,
 } from './utils/pricing-policy.util';
+import { calculateStorageFee } from './utils/storage-fee.util';
 import { MqttService } from '../mqtt/mqtt.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -91,98 +92,24 @@ export class PaymentsService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  // Tính phí 4 chặng bậc thang theo thời lượng lưu kho kể từ droppedOffAt
+  // Tính phí lưu kho theo biểu phí của tòa nhà, người có gói tháng được miễn phí lâu hơn và phụ thu nhẹ hơn
   calculateFee(
     pkg: Package,
     building: Building,
     hasActiveSubscription: boolean,
   ) {
-    const policy = building?.pricingPolicy ?? DEFAULT_PRICING_POLICY;
+    const policy = mergePricingPolicy(building?.pricingPolicy);
 
-    const now = Date.now();
-    const droppedOffAtMs = new Date(pkg.droppedOffAt).getTime();
-
-    // Thời lượng lưu kho tính từ droppedOffAt
-    const hoursElapsed = Math.ceil((now - droppedOffAtMs) / (3600 * 1000));
-
-    // Phí cơ bản: 0đ nếu có gói tháng VIP, 5.000đ nếu dùng theo lượt
-    const baseFee = hasActiveSubscription ? 0 : (policy.perUseFee ?? 5000);
-
-    // Đã nộp phí gia hạn và vẫn trong hạn bảo chứng -> không thu thêm
-    if (pkg.paidUntil && now <= new Date(pkg.paidUntil).getTime()) {
-      return {
-        isOverdue: false,
-        feeDue: 0,
-        hoursElapsed,
-        currentTier: 'FREE' as const,
-        isPendingRetrieval: false,
-        canExtend: true,
-        baseFee: 0,
-        overdueFee: 0,
-        paidUntil: pkg.paidUntil,
-        totalFeePaid: pkg.totalFeePaid || 0,
-        buildingName: building?.name,
-        policy,
-      };
-    }
-
-    // Chặng 1: 0h -> T1 (12 giờ đầu)
-    if (hoursElapsed <= policy.t1Hours) {
-      return {
-        isOverdue: false,
-        feeDue: baseFee,
-        hoursElapsed,
-        currentTier: 'FREE' as const,
-        isPendingRetrieval: false,
-        canExtend: true,
-        baseFee,
-        overdueFee: 0,
-        paidUntil: new Date(droppedOffAtMs + policy.t1Hours * 3600 * 1000),
-        totalFeePaid: pkg.totalFeePaid || 0,
-        buildingName: building?.name,
-        policy,
-      };
-    }
-
-    // Chặng 2: T1 -> T2 (12h - 24h)
-    if (hoursElapsed <= policy.t2Hours) {
-      const rawFee = baseFee + policy.feeX1 - (pkg.totalFeePaid || 0);
-      return {
-        isOverdue: true,
-        feeDue: Math.max(0, rawFee),
-        hoursElapsed,
-        currentTier: 'TIER_1' as const,
-        isPendingRetrieval: false,
-        canExtend: true,
-        baseFee,
-        overdueFee: policy.feeX1,
-        paidUntil: pkg.paidUntil,
-        totalFeePaid: pkg.totalFeePaid || 0,
-        buildingName: building?.name,
-        policy,
-      };
-    }
-
-    // Chặng 3 & 4: T2 -> T3 (24h - 48h) và > T3 (đã thu hồi kho)
-    const isPendingRetrieval = hoursElapsed >= policy.t3Hours;
-    const totalOverdueFee = policy.feeX1 + policy.feeX2;
-    const rawFee = baseFee + totalOverdueFee - (pkg.totalFeePaid || 0);
-    const maxCap = baseFee + (policy.maxOverdueFeeCap ?? 25000);
-
-    return {
-      isOverdue: true,
-      feeDue: Math.max(0, Math.min(rawFee, maxCap)),
-      hoursElapsed,
-      currentTier: isPendingRetrieval ? 'RETRIEVAL' : 'TIER_2',
-      isPendingRetrieval,
-      canExtend: !isPendingRetrieval,
-      baseFee,
-      overdueFee: totalOverdueFee,
+    const result = calculateStorageFee({
+      droppedOffAt: pkg.droppedOffAt,
       paidUntil: pkg.paidUntil,
-      totalFeePaid: pkg.totalFeePaid || 0,
-      buildingName: building?.name,
+      totalFeePaid: pkg.totalFeePaid,
+      now: Date.now(),
       policy,
-    };
+      hasActiveSubscription,
+    });
+
+    return { ...result, buildingName: building?.name, policy };
   }
 
   // Lấy biểu phí lưu kho của tòa nhà để cư dân xem, không kèm thông tin tài khoản ngân hàng
@@ -203,10 +130,7 @@ export class PaymentsService {
       throw new NotFoundException('Không tìm thấy thông tin tòa nhà');
     }
 
-    const policy = {
-      ...DEFAULT_PRICING_POLICY,
-      ...(building.pricingPolicy ?? {}),
-    };
+    const policy = mergePricingPolicy(building.pricingPolicy);
 
     return {
       buildingId: String(building._id),
