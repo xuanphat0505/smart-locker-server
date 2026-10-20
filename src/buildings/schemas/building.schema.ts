@@ -92,6 +92,11 @@ export class Building extends Document {
         default: DEFAULT_PRICING_POLICY.perUseFee,
         min: 0,
       },
+      subscriberFreeHours: {
+        type: Number,
+        default: DEFAULT_PRICING_POLICY.subscriberFreeHours,
+        min: 1,
+      },
       t1Hours: {
         type: Number,
         default: DEFAULT_PRICING_POLICY.t1Hours,
@@ -119,6 +124,7 @@ export class Building extends Document {
   pricingPolicy?: {
     monthlySubscriptionFee: number;
     perUseFee: number;
+    subscriberFreeHours: number;
     t1Hours: number;
     t2Hours: number;
     t3Hours: number;

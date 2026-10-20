@@ -7,7 +7,8 @@ describe('BuildingsService.update (đồng bộ hạn lưu kho theo mốc T3)', 
 
   const policy = (t3Hours: number) => ({
     monthlySubscriptionFee: 30000,
-    perUseFee: 5000,
+    perUseFee: 0,
+    subscriberFreeHours: 24,
     t1Hours: 12,
     t2Hours: 24,
     t3Hours,
@@ -99,6 +100,25 @@ describe('BuildingsService.update (đồng bộ hạn lưu kho theo mốc T3)', 
     await service.update(String(buildingId), { pricingPolicy: { perUseFee: 6000 } } as never, actor);
 
     expect(packageModel.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('từ chối thời gian miễn phí của gói tháng ngoài khoảng T1 đến T3', async () => {
+    const { service } = make(48, 48);
+
+    await expect(
+      service.update(String(buildingId), { pricingPolicy: { subscriberFreeHours: 6 } } as never, actor),
+    ).rejects.toThrow('khoảng từ T1 đến T3');
+    await expect(
+      service.update(String(buildingId), { pricingPolicy: { subscriberFreeHours: 60 } } as never, actor),
+    ).rejects.toThrow('khoảng từ T1 đến T3');
+  });
+
+  it('chấp nhận thời gian miễn phí của gói tháng nằm trong khoảng T1 đến T3', async () => {
+    const { service } = make(48, 48);
+
+    await expect(
+      service.update(String(buildingId), { pricingPolicy: { subscriberFreeHours: 48 } } as never, actor),
+    ).resolves.toBeDefined();
   });
 
   it('không sửa biểu phí thì không đụng tới các kiện', async () => {

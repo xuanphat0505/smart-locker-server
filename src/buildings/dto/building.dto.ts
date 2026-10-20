@@ -172,14 +172,26 @@ export class PricingPolicyDto {
   monthlySubscriptionFee?: number;
 
   @ApiPropertyOptional({
-    example: 5000,
-    description: 'Phí lượt nhận hàng lẻ dành cho khách chưa mua gói tháng (VNĐ / lượt)',
+    example: 0,
+    description:
+      'Phí cơ bản mỗi lượt nhận hàng của khách chưa mua gói tháng (VNĐ / lượt), mặc định 0 vì 12 giờ đầu miễn phí',
     minimum: 0,
   })
   @IsOptional()
   @IsNumber({}, { message: 'Phí lượt lẻ phải là số' })
   @Min(0, { message: 'Phí lượt lẻ không được âm' })
   perUseFee?: number;
+
+  @ApiPropertyOptional({
+    example: 24,
+    description:
+      'Số giờ lưu kho đầu tiên miễn phí cho cư dân có gói tháng, từ T1 đến T3. Nên đặt bằng T2 hoặc T3 để bảng phí hiển thị khớp với phí thực tính',
+    minimum: 1,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Thời gian miễn phí của gói tháng phải là số nguyên giờ' })
+  @Min(1, { message: 'Thời gian miễn phí của gói tháng tối thiểu 1 giờ' })
+  subscriberFreeHours?: number;
 
   @ApiPropertyOptional({
     example: 12,
