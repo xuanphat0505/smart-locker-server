@@ -8,6 +8,7 @@ import {
   UseGuards,
   Request,
   ParseIntPipe,
+  Query,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
@@ -17,6 +18,7 @@ import {
   SandboxConfirmPaymentDto,
   SepayWebhookDto,
 } from './dto';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -29,6 +31,7 @@ import {
   ApiSepayWebhookDoc,
   ApiGetPaymentStatusDoc,
   ApiGetMyPaymentsDoc,
+  ApiGetMyInvoicesDoc,
   ApiGetPaymentByOrderCodeDoc,
   ApiKioskPickupDoc,
   ApiGetResidentPricingDoc,
@@ -132,6 +135,19 @@ export class PaymentsController {
   @ApiGetMyPaymentsDoc()
   async getMyPayments(@Request() req: { user: AuthenticatedUser }) {
     return this.paymentsService.getMyPayments(req.user.userId);
+  }
+
+  // Lấy hóa đơn theo kiện hàng của cư dân đang đăng nhập (phí đang nợ, đã trả, đã nhận chờ đủ)
+  @Get('my-invoices')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.RESIDENT)
+  @ApiBearerAuth('JWT-auth')
+  @ApiGetMyInvoicesDoc()
+  async getMyInvoices(
+    @Request() req: { user: AuthenticatedUser },
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.paymentsService.getMyInvoices(req.user.userId, query);
   }
 
   // Tra cứu chi tiết trạng thái giao dịch thanh toán theo mã orderCode duy nhất

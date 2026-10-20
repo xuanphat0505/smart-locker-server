@@ -140,6 +140,21 @@ export function ApiGetMyPaymentsDoc() {
   );
 }
 
+// Tài liệu Swagger cho endpoint xem hóa đơn theo kiện hàng
+export function ApiGetMyInvoicesDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Cư dân xem hóa đơn phí lưu kho theo từng kiện hàng',
+      description:
+        'Mỗi kiện có phí là một hóa đơn gồm tổng phí hiện tại, số đã trả, số đã nhận nhưng chưa đủ (phiên PENDING), số còn nợ và hướng dẫn chuyển nốt. Kèm biên nhận gói tháng tách riêng. Hỗ trợ phân trang page/limit (mặc định 20, tối đa 100); hóa đơn còn nợ luôn ở trang đầu và biên nhận gói tháng chỉ trả ở trang đầu. Chỉ trả dữ liệu của chính người gọi',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Lấy hóa đơn thành công',
+    }),
+  );
+}
+
 // Tài liệu Swagger cho endpoint tra cứu trạng thái giao dịch thanh toán theo mã orderCode
 export function ApiGetPaymentByOrderCodeDoc() {
   return applyDecorators(
