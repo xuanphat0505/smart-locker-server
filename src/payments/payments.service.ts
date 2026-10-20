@@ -55,6 +55,11 @@ import {
   mergePricingPolicy,
 } from './utils/pricing-policy.util';
 import { calculateStorageFee } from './utils/storage-fee.util';
+import {
+  InvoicePackageInput,
+  InvoicePaymentInput,
+  buildInvoices,
+} from './utils/invoice.util';
 import { MqttService } from '../mqtt/mqtt.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -67,6 +72,7 @@ import {
   ActivityCategory,
   ActivityStatus,
 } from '../activity-logs/enums/activity-log.enums';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { Role } from '../auth/enums/role.enum';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 
@@ -857,6 +863,116 @@ export class PaymentsService {
       )
       .populate('buildingId', 'name code')
       .populate('lockerId', 'name code');
+  }
+
+  // Lấy hóa đơn theo kiện hàng của cư dân, gồm phí đang nợ, khoản đã trả, khoản đã nhận chờ đủ và biên nhận gói tháng
+  async getMyInvoices(userId: string, query: PaginationQueryDto) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Mã người dùng không hợp lệ');
+    }
+    const residentId = new Types.ObjectId(userId);
+
+    const [resident, payments] = await Promise.all([
+      this.userModel
+        .findById(residentId)
+        .select('subscriptionStatus subscriptionExpiresAt')
+        .lean(),
+      this.paymentModel
+        .find({
+          userId: residentId,
+          status: { $in: [PaymentStatus.PAID, PaymentStatus.PENDING] },
+        })
+        .lean(),
+    ]);
+
+    const hasActiveSubscription =
+      resident?.subscriptionStatus === 'ACTIVE' &&
+      resident?.subscriptionExpiresAt != null &&
+      new Date() <= new Date(resident.subscriptionExpiresAt);
+
+    const paidPackageIds = payments
+      .map((p) => p.packageId)
+      .filter((id): id is Types.ObjectId => !!id);
+
+    const activeStatuses = [
+      PackageStatus.WAITING_FOR_PICKUP,
+      PackageStatus.OVERDUE,
+    ];
+
+    const packages = await this.packageModel
+      .find({
+        $or: [
+          { residentId, status: { $in: activeStatuses } },
+          { _id: { $in: paidPackageIds } },
+        ],
+      })
+      .populate('buildingId', 'name pricingPolicy')
+      .populate('lockerId', 'name');
+
+    const packageInputs = packages.map((pkg) => {
+      const isActive = activeStatuses.includes(pkg.status);
+      const locker = pkg.lockerId as unknown as Locker;
+      let liveTotalFee = 0;
+      let currentTier: InvoicePackageInput['currentTier'] = null;
+
+      if (isActive) {
+        const fee = this.calculateFee(
+          pkg,
+          pkg.buildingId as unknown as Building,
+          hasActiveSubscription,
+        );
+        liveTotalFee = Math.min(
+          fee.baseFee + fee.overdueFee,
+          fee.baseFee + fee.policy.maxOverdueFeeCap,
+        );
+        currentTier = fee.currentTier;
+      }
+
+      return {
+        packageId: String(pkg._id),
+        trackingNumber: pkg.trackingNumber,
+        lockerName: locker?.name,
+        boxNumber: pkg.boxNumber,
+        packageStatus: pkg.status,
+        droppedOffAt: pkg.droppedOffAt,
+        isActive,
+        liveTotalFee,
+        currentTier,
+      };
+    });
+
+    const paymentInputs: InvoicePaymentInput[] = payments.map((p) => ({
+      orderCode: p.orderCode,
+      packageId: p.packageId ? String(p.packageId) : undefined,
+      paymentType: p.paymentType,
+      status: p.status,
+      amount: p.amount,
+      receivedAmount: p.receivedAmount || 0,
+      paidAt: p.paidAt,
+      receiptAt: p.receipts?.length
+        ? p.receipts[p.receipts.length - 1].receivedAt
+        : undefined,
+      description: p.description,
+      expiresAt: p.expiresAt,
+      sepayTransactionId: p.sepayTransactionId,
+    }));
+
+    const { invoices, subscriptionReceipts } = buildInvoices(
+      packageInputs,
+      paymentInputs,
+    );
+
+    // Phân trang trên danh sách đã sắp xếp (hóa đơn còn nợ luôn ở trang đầu), biên nhận gói tháng chỉ trả ở trang đầu
+    const { page, limit } = query;
+    const total = invoices.length;
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      asOf: new Date(),
+      invoices: invoices.slice((page - 1) * limit, page * limit),
+      subscriptionReceipts: page === 1 ? subscriptionReceipts : [],
+      pagination: { total, page, limit, totalPages, hasNext: page < totalPages },
+    };
   }
 
   // Tra cứu chi tiết một giao dịch theo mã orderCode duy nhất
