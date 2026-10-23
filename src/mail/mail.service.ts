@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import { escapeHtml } from './utils/escape-html.util';
 
 @Injectable()
 export class MailService {
@@ -77,7 +78,7 @@ export class MailService {
         <div style="padding: 28px 24px;">
           <h2 style="font-size: 18px; margin-top: 0; color: #FF8533;">Thông Báo Tiếp Nhận Hồ Sơ Cư Dân Mới</h2>
           <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
-            Kính gửi <strong>Ban Quản Lý ${buildingName}</strong>,<br/>
+            Kính gửi <strong>Ban Quản Lý ${escapeHtml(buildingName)}</strong>,<br/>
             Hệ thống vừa tiếp nhận một hồ sơ đăng ký tài khoản cư dân đang chờ xét duyệt để kích hoạt quyền nhận bưu phẩm tại trạm tủ thông minh:
           </p>
           
@@ -85,23 +86,23 @@ export class MailService {
             <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
               <tr>
                 <td style="padding: 6px 0; color: #72798E; width: 140px;">Họ và tên:</td>
-                <td style="padding: 6px 0; font-weight: bold; color: #FFFFFF;">${resident.name}</td>
+                <td style="padding: 6px 0; font-weight: bold; color: #FFFFFF;">${escapeHtml(resident.name)}</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #72798E;">Số điện thoại:</td>
-                <td style="padding: 6px 0; font-weight: bold; color: #FF6B00;">${resident.phone}</td>
+                <td style="padding: 6px 0; font-weight: bold; color: #FF6B00;">${escapeHtml(resident.phone)}</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #72798E;">Căn hộ đăng ký:</td>
-                <td style="padding: 6px 0; font-weight: bold; color: #FFFFFF;">${resident.apartment || 'Chưa cập nhật'}</td>
+                <td style="padding: 6px 0; font-weight: bold; color: #FFFFFF;">${escapeHtml(resident.apartment || 'Chưa cập nhật')}</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #72798E;">Tòa nhà / Chung cư:</td>
-                <td style="padding: 6px 0; color: #FFFFFF;">${buildingName}</td>
+                <td style="padding: 6px 0; color: #FFFFFF;">${escapeHtml(buildingName)}</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #72798E;">Email cá nhân:</td>
-                <td style="padding: 6px 0; color: #A0A5B5;">${resident.email || 'N/A'}</td>
+                <td style="padding: 6px 0; color: #A0A5B5;">${escapeHtml(resident.email || 'N/A')}</td>
               </tr>
             </table>
           </div>
@@ -147,9 +148,9 @@ export class MailService {
           <p style="margin: 4px 0 0 0; font-size: 13px; color: rgba(255,255,255,0.9);">Chào mừng bạn đến với Tiện ích Smart Locker</p>
         </div>
         <div style="padding: 28px 24px;">
-          <p style="font-size: 15px; color: #FFFFFF;">Xin chào <strong>${residentName}</strong>,</p>
+          <p style="font-size: 15px; color: #FFFFFF;">Xin chào <strong>${escapeHtml(residentName)}</strong>,</p>
           <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
-            Ban Quản Lý <strong>${buildingName}</strong> đã phê duyệt và kích hoạt thành công hồ sơ cư dân căn hộ <strong>${apartment}</strong> của bạn.
+            Ban Quản Lý <strong>${escapeHtml(buildingName)}</strong> đã phê duyệt và kích hoạt thành công hồ sơ cư dân căn hộ <strong>${escapeHtml(apartment)}</strong> của bạn.
           </p>
           <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
             Giờ đây bạn đã có thể đăng nhập vào ứng dụng Smart Locker trên điện thoại để nhận thông báo bưu phẩm, xem mã OTP và mở khóa nhận hàng tại trạm tủ sảnh tòa nhà 24/7.
@@ -166,12 +167,12 @@ export class MailService {
           <h1 style="margin: 0; font-size: 22px; color: #FFFFFF;">THÔNG BÁO XÉT DUYỆT HỒ SƠ</h1>
         </div>
         <div style="padding: 28px 24px;">
-          <p style="font-size: 15px; color: #FFFFFF;">Xin chào <strong>${residentName}</strong>,</p>
+          <p style="font-size: 15px; color: #FFFFFF;">Xin chào <strong>${escapeHtml(residentName)}</strong>,</p>
           <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
-            Hồ sơ đăng ký cư dân căn hộ <strong>${apartment}</strong> tại <strong>${buildingName}</strong> chưa được Ban Quản Lý phê duyệt vì lý do sau:
+            Hồ sơ đăng ký cư dân căn hộ <strong>${escapeHtml(apartment)}</strong> tại <strong>${escapeHtml(buildingName)}</strong> chưa được Ban Quản Lý phê duyệt vì lý do sau:
           </p>
           <div style="background-color: #1B1E26; border-left: 4px solid #EF4444; padding: 14px 18px; margin: 16px 0; color: #FCA5A5; font-size: 14px;">
-            ${rejectReason || 'Thông tin căn hộ không trùng khớp với hồ sơ lưu trữ tại Ban Quản Lý.'}
+            ${escapeHtml(rejectReason || 'Thông tin căn hộ không trùng khớp với hồ sơ lưu trữ tại Ban Quản Lý.')}
           </div>
           <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
             Vui lòng liên hệ trực tiếp với Ban Quản Lý sảnh tòa nhà để được hướng dẫn và xác minh thông tin.
@@ -204,7 +205,7 @@ export class MailService {
         <div style="padding: 28px 24px;">
           <h2 style="font-size: 18px; margin-top: 0; color: #FF8533;">Mã Xác Thực Đặt Lại Mật Khẩu</h2>
           <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
-            Xin chào <strong>${name}</strong>,<br/>
+            Xin chào <strong>${escapeHtml(name)}</strong>,<br/>
             Hệ thống Smart Locker nhận được yêu cầu đặt lại mật khẩu cho tài khoản liên kết với địa chỉ email này.
           </p>
           

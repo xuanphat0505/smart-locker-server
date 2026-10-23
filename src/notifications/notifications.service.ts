@@ -2,7 +2,10 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { NotificationsGateway } from './notifications.gateway';
-import { PushNotificationsService } from './push-notifications.service';
+import {
+  ExpoPushPayload,
+  PushNotificationsService,
+} from './push-notifications.service';
 import {
   Notification,
   NotificationDocument,
@@ -360,41 +363,28 @@ export class NotificationsService {
       );
 
       // Kênh thông báo đẩy trực tiếp tới thiết bị di động
-      let pushToken = result.devicePushToken;
-      if (!pushToken) {
-        const resident = await this.userModel
-          .findById(residentId)
-          .select('devicePushToken')
-          .lean();
-        pushToken = resident?.devicePushToken;
-      }
-
-      if (pushToken) {
-        this.pushNotificationsService
-          .sendPushNotification({
-            to: pushToken,
-            title: isApproved
-              ? 'Hồ sơ cư dân đã được phê duyệt! 🎉'
-              : 'Hồ sơ cư dân đã bị từ chối ⚠️',
-            body: isApproved
-              ? `Tài khoản cư dân tại căn hộ ${result.apartment || ''} đã được kích hoạt thành công.`
-              : `Yêu cầu xác nhận cư dân bị từ chối. Lý do: ${result.reason || 'Thông tin không khớp với dữ liệu tòa nhà'}.`,
-            data: {
-              type: isApproved ? 'RESIDENT_APPROVED' : 'RESIDENT_REJECTED',
-              status: result.status,
-              apartment: result.apartment,
-              reason: result.reason,
-              actionUrl: isApproved ? '/(tabs)' : '/auth/register/resident',
-            },
-            priority: 'high',
-            channelId: 'approval_status',
-          })
-          .catch((err) => {
-            this.logger.error(
-              `Lỗi khi đẩy thông báo duyệt cư dân tới thiết bị: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
-      }
+      await this.pushToUser(
+        residentId,
+        {
+          title: isApproved
+            ? 'Hồ sơ cư dân đã được phê duyệt! 🎉'
+            : 'Hồ sơ cư dân đã bị từ chối ⚠️',
+          body: isApproved
+            ? `Tài khoản cư dân tại căn hộ ${result.apartment || ''} đã được kích hoạt thành công.`
+            : `Yêu cầu xác nhận cư dân bị từ chối. Lý do: ${result.reason || 'Thông tin không khớp với dữ liệu tòa nhà'}.`,
+          data: {
+            type: isApproved ? 'RESIDENT_APPROVED' : 'RESIDENT_REJECTED',
+            status: result.status,
+            apartment: result.apartment,
+            reason: result.reason,
+            actionUrl: isApproved ? '/(tabs)' : '/auth/register/resident',
+          },
+          priority: 'high',
+          channelId: 'approval_status',
+        },
+        'duyệt cư dân',
+        result.devicePushToken,
+      );
     } catch (error) {
       this.logger.error(
         `Lỗi khi điều phối thông báo kết quả duyệt: ${error instanceof Error ? error.message : String(error)}`,
@@ -446,35 +436,24 @@ export class NotificationsService {
       );
 
       // Kênh thông báo đẩy trực tiếp tới thiết bị di động
-      const resident = await this.userModel
-        .findById(residentId)
-        .select('devicePushToken')
-        .lean();
-
-      if (resident?.devicePushToken) {
-        this.pushNotificationsService
-          .sendPushNotification({
-            to: resident.devicePushToken,
-            title: `Bưu kiện mới tại Ngăn #${packageInfo.boxNumber}! 📦`,
-            body: `Đơn hàng ${packageInfo.trackingNumber} từ ${packageInfo.carrierName} đã được đặt tại Ngăn #${packageInfo.boxNumber}. Mã OTP nhận hàng: ${packageInfo.pinCode}`,
-            data: {
-              type: 'PACKAGE_ARRIVED',
-              packageId: packageInfo.id,
-              trackingNumber: packageInfo.trackingNumber,
-              boxNumber: packageInfo.boxNumber,
-              lockerCode: packageInfo.lockerCode,
-              pinCode: packageInfo.pinCode,
-              actionUrl: `/locker/pickup?id=${packageInfo.id}&otp=${packageInfo.pinCode}&locker=${packageInfo.boxNumber}`,
-            },
-            priority: 'high',
-            channelId: 'package_arrived',
-          })
-          .catch((err) => {
-            this.logger.error(
-              `Lỗi khi đẩy thông báo bưu kiện tới thiết bị: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
-      }
+      await this.pushToUser(
+        residentId,
+        {
+          title: `Bưu kiện mới tại Ngăn #${packageInfo.boxNumber}! 📦`,
+          body: `Đơn hàng ${packageInfo.trackingNumber} từ ${packageInfo.carrierName} đã được đặt tại Ngăn #${packageInfo.boxNumber}. Mở ứng dụng để xem mã OTP nhận hàng.`,
+          data: {
+            type: 'PACKAGE_ARRIVED',
+            packageId: packageInfo.id,
+            trackingNumber: packageInfo.trackingNumber,
+            boxNumber: packageInfo.boxNumber,
+            lockerCode: packageInfo.lockerCode,
+            actionUrl: `/locker/pickup?id=${packageInfo.id}&locker=${packageInfo.boxNumber}`,
+          },
+          priority: 'high',
+          channelId: 'package_arrived',
+        },
+        'bưu kiện',
+      );
     } catch (error) {
       this.logger.error(
         `Lỗi khi điều phối thông báo bưu kiện: ${error instanceof Error ? error.message : String(error)}`,
@@ -514,37 +493,53 @@ export class NotificationsService {
         },
       });
 
-      const resident = await this.userModel
-        .findById(residentId)
-        .select('devicePushToken')
-        .lean();
-
-      if (resident?.devicePushToken) {
-        this.pushNotificationsService
-          .sendPushNotification({
-            to: resident.devicePushToken,
-            title: 'Mã OTP nhận hàng đã được cấp lại',
-            body: `Mã OTP mới cho đơn ${packageInfo.trackingNumber}: ${packageInfo.pinCode}`,
-            data: {
-              type: 'PACKAGE_OTP_REISSUED',
-              packageId: packageInfo.id,
-              boxNumber: packageInfo.boxNumber,
-              lockerCode: packageInfo.lockerCode,
-              actionUrl,
-            },
-            priority: 'high',
-            channelId: 'package_arrived',
-          })
-          .catch((err) => {
-            this.logger.error(
-              `Lỗi khi đẩy thông báo cấp lại OTP tới thiết bị: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
-      }
+      await this.pushToUser(
+        residentId,
+        {
+          title: 'Mã OTP nhận hàng đã được cấp lại',
+          body: `Mã OTP mới cho đơn ${packageInfo.trackingNumber} đã sẵn sàng. Mở ứng dụng để xem mã.`,
+          data: {
+            type: 'PACKAGE_OTP_REISSUED',
+            packageId: packageInfo.id,
+            boxNumber: packageInfo.boxNumber,
+            lockerCode: packageInfo.lockerCode,
+            actionUrl: `/locker/pickup?id=${packageInfo.id}&locker=${packageInfo.boxNumber}`,
+          },
+          priority: 'high',
+          channelId: 'package_arrived',
+        },
+        'cấp lại OTP',
+      );
     } catch (error) {
       this.logger.error(
         `Lỗi khi điều phối thông báo cấp lại OTP: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  // Gửi thông báo đẩy tới thiết bị của một người dùng: tự tra token nếu chưa có, không chờ kết quả gửi và chỉ ghi log khi lỗi
+  private async pushToUser(
+    userId: string,
+    payload: Omit<ExpoPushPayload, 'to'>,
+    logLabel: string,
+    knownToken?: string,
+  ): Promise<void> {
+    let pushToken = knownToken;
+    if (!pushToken) {
+      const user = await this.userModel
+        .findById(userId)
+        .select('devicePushToken')
+        .lean();
+      pushToken = user?.devicePushToken;
+    }
+    if (!pushToken) return;
+
+    this.pushNotificationsService
+      .sendPushNotification({ ...payload, to: pushToken })
+      .catch((err) => {
+        this.logger.error(
+          `Lỗi khi đẩy thông báo ${logLabel} tới thiết bị: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 }
