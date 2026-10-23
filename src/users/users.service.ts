@@ -548,7 +548,7 @@ export class UsersService {
     }
 
     if (statusChange === 'SUSPEND') {
-      this.notificationsService.notifyAccountSuspended(String(target._id));
+      this.notifySuspendedResident(updated);
     }
 
     await this.activityLogsService.log({
@@ -570,6 +570,36 @@ export class UsersService {
     });
 
     return updated;
+  }
+
+  // Báo cư dân bị khóa qua thông báo và email, chạy nền để lỗi gửi không làm hỏng thao tác khóa
+  private notifySuspendedResident(user: User): void {
+    const userId = String(user._id);
+    const buildingId = user.buildingId ? String(user.buildingId) : undefined;
+
+    this.notificationsService
+      .notifyAccountSuspended(userId, buildingId)
+      .catch((err) => {
+        this.logger.error(
+          `Lỗi khi phát thông báo khóa tài khoản: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+
+    if (!user.email || !buildingId) return;
+    this.buildingsService
+      .findById(buildingId)
+      .then((building) =>
+        this.mailService.sendAccountSuspendedNotice(
+          user.email,
+          user.name,
+          building?.name || 'Tòa Nhà Chung Cư',
+        ),
+      )
+      .catch((mailErr) => {
+        this.logger.error(
+          `Lỗi khi gửi email khóa tài khoản: ${mailErr instanceof Error ? mailErr.message : String(mailErr)}`,
+        );
+      });
   }
 
   // Ghi nhật ký xóa tài khoản người dùng ở mức cảnh báo vì thao tác không thể hoàn tác

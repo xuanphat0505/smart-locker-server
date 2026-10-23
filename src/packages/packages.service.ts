@@ -30,6 +30,7 @@ import { BoxSize, BoxStatus, DoorStatus, LockerAction } from '../lockers/enums';
 import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
 import { MqttService } from '../mqtt/mqtt.service';
 import { FaceVerificationService } from '../ai/services/face-verification.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -38,6 +39,8 @@ import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { generateUniquePinCode } from './utils/pin-code.util';
 import { normalizeShipperName, resolveSessionName } from './utils/shipper-name.util';
 import {
+  EXPIRY_WARNING_HOURS,
+  buildExpiringSoonFilter,
   buildOverdueFilter,
   computeExpiredAt,
   resolveStorageLimitHours,
@@ -80,6 +83,7 @@ export class PackagesService {
     @InjectModel(Box.name) private readonly boxModel: Model<Box>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
     private readonly notificationsService: NotificationsService,
+    private readonly mailService: MailService,
     private readonly mqttService: MqttService,
     private readonly faceVerificationService: FaceVerificationService,
     private readonly paymentsService: PaymentsService,
@@ -973,19 +977,115 @@ export class PackagesService {
     };
   }
 
-  // Tác vụ nền tự động chuyển các đơn hàng quá hạn lưu kho của tòa nhà (mốc T3) sang trạng thái quá hạn
+  // Tác vụ nền tự động chuyển các đơn hàng quá hạn lưu kho của tòa nhà (mốc T3) sang trạng thái quá hạn và báo cư dân qua thông báo và email
   @Cron(CronExpression.EVERY_HOUR)
   async handleOverduePackagesCron(): Promise<void> {
-    const result = await this.packageModel.updateMany(
-      buildOverdueFilter(new Date()),
-      {
-        $set: { status: PackageStatus.OVERDUE },
-      },
+    const overdue = await this.packageModel
+      .find(buildOverdueFilter(new Date()))
+      .populate('lockerId', 'name')
+      .lean();
+
+    let movedCount = 0;
+    for (const pkg of overdue) {
+      const moved = await this.packageModel.updateOne(
+        { _id: pkg._id, status: PackageStatus.WAITING_FOR_PICKUP },
+        { $set: { status: PackageStatus.OVERDUE } },
+      );
+      if (moved.modifiedCount === 0) continue;
+      movedCount += 1;
+
+      const locker = pkg.lockerId as unknown as { name?: string } | null;
+      await this.notifyResidentOverdue(pkg, locker?.name || 'Trạm Tủ Thông Minh');
+    }
+
+    if (movedCount > 0) {
+      this.logger.warn(
+        `Đã tự động chuyển ${movedCount} bưu kiện quá hạn lưu kho sang trạng thái OVERDUE`,
+      );
+    }
+  }
+
+  // Báo cư dân bưu kiện vừa quá hạn qua thông báo và email; lỗi gửi chỉ ghi log để không chặn các kiện còn lại
+  private async notifyResidentOverdue(
+    pkg: {
+      _id: unknown;
+      residentId: unknown;
+      buildingId: unknown;
+      trackingNumber: string;
+      boxNumber: number;
+    },
+    lockerName: string,
+  ): Promise<void> {
+    const packageInfo = {
+      id: String(pkg._id),
+      trackingNumber: pkg.trackingNumber,
+      boxNumber: pkg.boxNumber,
+      lockerName,
+    };
+
+    await this.notificationsService.notifyPackageOverdue(
+      String(pkg.residentId),
+      String(pkg.buildingId),
+      packageInfo,
     );
 
-    if (result.modifiedCount > 0) {
-      this.logger.warn(
-        `Đã tự động chuyển ${result.modifiedCount} bưu kiện quá hạn lưu kho sang trạng thái OVERDUE`,
+    try {
+      const resident = await this.userModel
+        .findById(pkg.residentId)
+        .select('name email apartment')
+        .lean();
+
+      await this.notificationsService.notifyAdminsPackageOverdue(
+        String(pkg.buildingId),
+        {
+          ...packageInfo,
+          residentName: resident?.name || 'Cư dân',
+          apartment: resident?.apartment,
+        },
+      );
+
+      await this.mailService.sendPackageOverdueNotice(
+        resident?.email,
+        resident?.name || 'Cư dân',
+        packageInfo,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Lỗi khi gửi email bưu kiện quá hạn ${pkg.trackingNumber}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  // Tác vụ nền nhắc cư dân các kiện sắp hết hạn lưu kho; đánh dấu đã nhắc có điều kiện nên mỗi kiện chỉ được nhắc một lần
+  @Cron(CronExpression.EVERY_HOUR)
+  async handleExpiringPackagesCron(): Promise<void> {
+    const now = new Date();
+    const candidates = await this.packageModel
+      .find(buildExpiringSoonFilter(now, EXPIRY_WARNING_HOURS))
+      .populate('lockerId', 'name')
+      .lean();
+
+    for (const pkg of candidates) {
+      const claimed = await this.packageModel.updateOne(
+        { _id: pkg._id, expiryWarnedAt: { $exists: false } },
+        { $set: { expiryWarnedAt: now } },
+      );
+      if (claimed.modifiedCount === 0) continue;
+
+      const locker = pkg.lockerId as unknown as { name?: string } | null;
+      await this.notificationsService.notifyPackageExpiring(
+        String(pkg.residentId),
+        String(pkg.buildingId),
+        {
+          id: String(pkg._id),
+          trackingNumber: pkg.trackingNumber,
+          boxNumber: pkg.boxNumber,
+          lockerName: locker?.name || 'Trạm Tủ Thông Minh',
+          hoursLeft: Math.max(
+            1,
+            Math.ceil((pkg.expiredAt.getTime() - now.getTime()) / 3600000),
+          ),
+        },
       );
     }
   }

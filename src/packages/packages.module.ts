@@ -11,6 +11,7 @@ import { Box, BoxSchema } from '../lockers/schemas/box.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Building, BuildingSchema } from '../buildings/schemas/building.schema';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { MailModule } from '../mail/mail.module';
 import { MqttModule } from '../mqtt/mqtt.module';
 import { AuthModule } from '../auth/auth.module';
 import { AiModule } from '../ai/ai.module';
@@ -35,6 +36,7 @@ import { DepositWatcherService } from './deposit-watcher.service';
     ]),
     AuthModule,
     NotificationsModule,
+    MailModule,
     MqttModule,
     AiModule,
     PaymentsModule,

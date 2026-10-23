@@ -233,6 +233,80 @@ export class MailService {
     return this.sendMail(email, subject, htmlContent);
   }
 
+  // Gửi email báo cư dân bưu kiện đã quá hạn lưu kho và cần nhận hàng sớm
+  async sendPackageOverdueNotice(
+    residentEmail: string | undefined,
+    residentName: string,
+    packageInfo: {
+      trackingNumber: string;
+      boxNumber: number;
+      lockerName: string;
+    },
+  ): Promise<boolean> {
+    if (!residentEmail) {
+      return false;
+    }
+
+    const subject = `[SMART LOCKER] Bưu kiện ${packageInfo.trackingNumber} đã quá hạn lưu kho`;
+
+    const htmlContent = `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #14161B; border-radius: 12px; overflow: hidden; border: 1px solid #2B2F3A; color: #FFFFFF;">
+        <div style="background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%); padding: 24px; text-align: center;">
+          <h1 style="margin: 0; font-size: 22px; color: #FFFFFF;">BƯU KIỆN QUÁ HẠN LƯU KHO</h1>
+        </div>
+        <div style="padding: 28px 24px;">
+          <p style="font-size: 15px; color: #FFFFFF;">Xin chào <strong>${escapeHtml(residentName)}</strong>,</p>
+          <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
+            Bưu kiện <strong>${escapeHtml(packageInfo.trackingNumber)}</strong> tại Ngăn #${packageInfo.boxNumber} (${escapeHtml(packageInfo.lockerName)}) đã quá thời hạn lưu kho tối đa.
+          </p>
+          <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
+            Phí lưu kho phát sinh sẽ được tính khi bạn nhận hàng. Vui lòng mở ứng dụng Smart Locker để xem chi tiết và nhận hàng sớm nhằm hạn chế phí.
+          </p>
+        </div>
+        <div style="background-color: #0F1015; padding: 16px 24px; text-align: center; font-size: 12px; color: #72798E; border-top: 1px solid #2B2F3A;">
+          Email tự động từ Hệ thống Smart Locker. Vui lòng không trả lời thư này.
+        </div>
+      </div>
+    `;
+
+    return this.sendMail(residentEmail, subject, htmlContent);
+  }
+
+  // Gửi email báo cư dân tài khoản đã bị Ban Quản Lý tạm khóa và hướng dẫn liên hệ
+  async sendAccountSuspendedNotice(
+    residentEmail: string | undefined,
+    residentName: string,
+    buildingName: string,
+  ): Promise<boolean> {
+    if (!residentEmail) {
+      return false;
+    }
+
+    const subject = '[SMART LOCKER] Tài khoản của bạn đã bị tạm khóa';
+
+    const htmlContent = `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #14161B; border-radius: 12px; overflow: hidden; border: 1px solid #2B2F3A; color: #FFFFFF;">
+        <div style="background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%); padding: 24px; text-align: center;">
+          <h1 style="margin: 0; font-size: 22px; color: #FFFFFF;">TÀI KHOẢN BỊ TẠM KHÓA</h1>
+        </div>
+        <div style="padding: 28px 24px;">
+          <p style="font-size: 15px; color: #FFFFFF;">Xin chào <strong>${escapeHtml(residentName)}</strong>,</p>
+          <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
+            Tài khoản cư dân của bạn tại <strong>${escapeHtml(buildingName)}</strong> đã bị Ban Quản Lý tạm khóa. Bạn sẽ không thể đăng nhập và nhận hàng bằng ứng dụng cho đến khi tài khoản được mở lại.
+          </p>
+          <p style="font-size: 14px; line-height: 22px; color: #A0A5B5;">
+            Vui lòng liên hệ trực tiếp Ban Quản Lý sảnh tòa nhà để được hướng dẫn và hỗ trợ.
+          </p>
+        </div>
+        <div style="background-color: #0F1015; padding: 16px 24px; text-align: center; font-size: 12px; color: #72798E; border-top: 1px solid #2B2F3A;">
+          Email tự động từ Hệ thống Smart Locker. Vui lòng không trả lời thư này.
+        </div>
+      </div>
+    `;
+
+    return this.sendMail(residentEmail, subject, htmlContent);
+  }
+
   // Phương thức phụ trợ thực hiện gửi thư qua Nodemailer với xử lý lỗi an toàn
   private async sendMail(
     to: string | string[],
