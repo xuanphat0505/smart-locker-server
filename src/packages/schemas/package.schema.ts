@@ -168,6 +168,10 @@ export class Package extends Document {
   @Prop({ required: false })
   otpReissuedAt?: Date;
 
+  // Thời điểm đã nhắc cư dân kiện sắp hết hạn lưu kho, dùng để chỉ nhắc một lần
+  @Prop({ required: false })
+  expiryWarnedAt?: Date;
+
   // Ghi chú đính kèm của đơn hàng
   @Prop({ required: false, trim: true })
   note?: string;

@@ -11,6 +11,9 @@ export interface ExpoPushPayload {
   badge?: number;
 }
 
+// Số tin nhắn tối đa Expo cho phép trong một yêu cầu gửi
+const EXPO_MAX_BATCH_SIZE = 100;
+
 // Dịch vụ gửi thông báo đẩy tới thiết bị di động thông qua hạ tầng Expo Push Notification Service
 @Injectable()
 export class PushNotificationsService {
@@ -36,41 +39,50 @@ export class PushNotificationsService {
     }
 
     try {
-      const messages = validTokens.map((token) => ({
-        to: token,
-        sound: payload.sound ?? 'default',
-        title: payload.title,
-        body: payload.body,
-        data: payload.data ?? {},
-        priority: payload.priority ?? 'high',
-        channelId: payload.channelId ?? 'default',
-        badge: payload.badge,
-      }));
+      // Expo chỉ nhận tối đa 100 tin nhắn mỗi yêu cầu nên chia lô khi gửi nhiều thiết bị
+      let allSucceeded = true;
+      for (let i = 0; i < validTokens.length; i += EXPO_MAX_BATCH_SIZE) {
+        const messages = validTokens
+          .slice(i, i + EXPO_MAX_BATCH_SIZE)
+          .map((token) => ({
+            to: token,
+            sound: payload.sound ?? 'default',
+            title: payload.title,
+            body: payload.body,
+            data: payload.data ?? {},
+            priority: payload.priority ?? 'high',
+            channelId: payload.channelId ?? 'default',
+            badge: payload.badge,
+          }));
 
-      const response = await fetch(this.expoPushUrl, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Accept-Encoding': 'gzip, deflate',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(messages),
-      });
+        const response = await fetch(this.expoPushUrl, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Accept-Encoding': 'gzip, deflate',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(messages),
+        });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        this.logger.error(
-          `Lỗi từ máy chủ Expo Push API: ${response.status} - ${errorText}`,
-        );
-        return false;
+        if (!response.ok) {
+          const errorText = await response.text();
+          this.logger.error(
+            `Lỗi từ máy chủ Expo Push API: ${response.status} - ${errorText}`,
+          );
+          allSucceeded = false;
+          continue;
+        }
+
+        await response.json();
       }
 
-      await response.json();
-
-      this.logger.log(
-        `Đã phát thông báo đẩy thành công tới ${validTokens.length} thiết bị qua Expo`,
-      );
-      return true;
+      if (allSucceeded) {
+        this.logger.log(
+          `Đã phát thông báo đẩy thành công tới ${validTokens.length} thiết bị qua Expo`,
+        );
+      }
+      return allSucceeded;
     } catch (error) {
       this.logger.error(
         `Lỗi ngoại lệ khi gửi thông báo đẩy qua Expo: ${error instanceof Error ? error.message : String(error)}`,

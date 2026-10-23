@@ -178,7 +178,7 @@ export class NotificationsService {
         buildingId: new Types.ObjectId(dto.buildingId),
         role: Role.RESIDENT,
       })
-      .select('_id')
+      .select('_id devicePushToken')
       .lean()
       .exec();
 
@@ -216,6 +216,34 @@ export class NotificationsService {
       actionUrl: dto.actionUrl,
       timestamp: new Date().toISOString(),
     });
+
+    // Đẩy thông báo tới thiết bị của các cư dân đã đăng ký token, chạy nền để không làm chậm phản hồi
+    const pushTokens = residents
+      .map((res) => res.devicePushToken)
+      .filter((token): token is string => !!token);
+    if (pushTokens.length > 0) {
+      this.pushNotificationsService
+        .sendPushNotification({
+          to: pushTokens,
+          title: dto.title,
+          body: dto.message,
+          data: {
+            type: 'SYSTEM_ANNOUNCEMENT',
+            actionUrl: dto.actionUrl,
+          },
+          priority:
+            dto.priority === NotificationPriority.CRITICAL ||
+            dto.priority === NotificationPriority.HIGH
+              ? 'high'
+              : 'default',
+          channelId: 'default',
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Lỗi khi đẩy thông báo toàn tòa nhà tới thiết bị: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
 
     return {
       message: `Đã gửi thông báo thành công tới ${residents.length} cư dân trong tòa nhà`,
@@ -305,13 +333,47 @@ export class NotificationsService {
     }
   }
 
-  // Phát sự kiện tạm khóa tài khoản qua WebSocket; lỗi phát sự kiện không được làm hỏng thao tác khóa
-  notifyAccountSuspended(residentId: string): void {
+  // Báo cư dân tài khoản vừa bị tạm khóa qua WebSocket, hộp thư và thông báo đẩy; lỗi gửi không được làm hỏng thao tác khóa
+  async notifyAccountSuspended(
+    residentId: string,
+    buildingId?: string,
+  ): Promise<void> {
     try {
       this.notificationsGateway.notifyAccountSuspended(residentId);
     } catch (error) {
       this.logger.error(
         `Lỗi khi phát sự kiện tạm khóa tài khoản: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    try {
+      const message =
+        'Tài khoản của bạn đã bị Ban Quản Lý tạm khóa. Vui lòng liên hệ Ban Quản Lý để được hỗ trợ.';
+
+      await this.createNotification({
+        recipientId: residentId,
+        buildingId,
+        title: 'Tài khoản đã bị tạm khóa',
+        message,
+        category: NotificationCategory.ACCOUNT,
+        type: NotificationType.RESIDENT_SUSPENDED,
+        priority: NotificationPriority.CRITICAL,
+      });
+
+      await this.pushToUser(
+        residentId,
+        {
+          title: 'Tài khoản đã bị tạm khóa ⚠️',
+          body: message,
+          data: { type: 'ACCOUNT_SUSPENDED' },
+          priority: 'high',
+          channelId: 'approval_status',
+        },
+        'tạm khóa tài khoản',
+      );
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi điều phối thông báo tạm khóa tài khoản: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -513,6 +575,191 @@ export class NotificationsService {
     } catch (error) {
       this.logger.error(
         `Lỗi khi điều phối thông báo cấp lại OTP: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  // Nhắc cư dân kiện hàng sắp hết hạn lưu kho để nhận hàng trước khi phát sinh phí
+  async notifyPackageExpiring(
+    residentId: string,
+    buildingId: string,
+    packageInfo: {
+      id: string;
+      trackingNumber: string;
+      boxNumber: number;
+      lockerName: string;
+      hoursLeft: number;
+    },
+  ): Promise<void> {
+    try {
+      const actionUrl = `/shipment/${packageInfo.id}`;
+      const message = `Đơn hàng ${packageInfo.trackingNumber} tại Ngăn #${packageInfo.boxNumber} (${packageInfo.lockerName}) còn khoảng ${packageInfo.hoursLeft} giờ là hết hạn lưu kho. Vui lòng nhận hàng sớm để tránh phát sinh phí.`;
+
+      await this.createNotification({
+        recipientId: residentId,
+        buildingId,
+        title: 'Bưu kiện sắp hết hạn lưu kho',
+        message,
+        category: NotificationCategory.PACKAGE,
+        type: NotificationType.PACKAGE_EXPIRING,
+        priority: NotificationPriority.HIGH,
+        actionUrl,
+        metadata: {
+          packageId: new Types.ObjectId(packageInfo.id),
+          trackingNumber: packageInfo.trackingNumber,
+          boxNumber: packageInfo.boxNumber,
+          hoursLeft: packageInfo.hoursLeft,
+        },
+      });
+
+      this.emitPackageStorageAlert(residentId, 'PACKAGE_EXPIRING', packageInfo);
+
+      await this.pushToUser(
+        residentId,
+        {
+          title: 'Bưu kiện sắp hết hạn lưu kho',
+          body: message,
+          data: {
+            type: 'PACKAGE_EXPIRING',
+            packageId: packageInfo.id,
+            boxNumber: packageInfo.boxNumber,
+            actionUrl,
+          },
+          priority: 'high',
+          channelId: 'package_arrived',
+        },
+        'bưu kiện sắp hết hạn',
+      );
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi điều phối thông báo bưu kiện sắp hết hạn: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  // Báo cư dân bưu kiện đã quá hạn lưu kho và cần nhận hàng sớm
+  async notifyPackageOverdue(
+    residentId: string,
+    buildingId: string,
+    packageInfo: {
+      id: string;
+      trackingNumber: string;
+      boxNumber: number;
+      lockerName: string;
+    },
+  ): Promise<void> {
+    try {
+      const actionUrl = `/shipment/${packageInfo.id}`;
+      const message = `Đơn hàng ${packageInfo.trackingNumber} tại Ngăn #${packageInfo.boxNumber} (${packageInfo.lockerName}) đã quá hạn lưu kho. Phí lưu kho sẽ được tính khi nhận hàng, vui lòng nhận sớm.`;
+
+      await this.createNotification({
+        recipientId: residentId,
+        buildingId,
+        title: 'Bưu kiện đã quá hạn lưu kho',
+        message,
+        category: NotificationCategory.PACKAGE,
+        type: NotificationType.PACKAGE_OVERDUE,
+        priority: NotificationPriority.HIGH,
+        actionUrl,
+        metadata: {
+          packageId: new Types.ObjectId(packageInfo.id),
+          trackingNumber: packageInfo.trackingNumber,
+          boxNumber: packageInfo.boxNumber,
+        },
+      });
+
+      this.emitPackageStorageAlert(residentId, 'PACKAGE_OVERDUE', packageInfo);
+
+      await this.pushToUser(
+        residentId,
+        {
+          title: 'Bưu kiện đã quá hạn lưu kho ⚠️',
+          body: message,
+          data: {
+            type: 'PACKAGE_OVERDUE',
+            packageId: packageInfo.id,
+            boxNumber: packageInfo.boxNumber,
+            actionUrl,
+          },
+          priority: 'high',
+          channelId: 'package_arrived',
+        },
+        'bưu kiện quá hạn',
+      );
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi điều phối thông báo bưu kiện quá hạn: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  // Báo Ban Quản Lý của tòa nhà có bưu kiện quá hạn lưu kho để chủ động liên hệ cư dân
+  async notifyAdminsPackageOverdue(
+    buildingId: string,
+    packageInfo: {
+      id: string;
+      trackingNumber: string;
+      boxNumber: number;
+      lockerName: string;
+      residentName: string;
+      apartment?: string;
+    },
+  ): Promise<void> {
+    try {
+      const admins = await this.userModel
+        .find({
+          buildingId: new Types.ObjectId(buildingId),
+          role: Role.BUILDING_ADMIN,
+        })
+        .select('_id')
+        .lean()
+        .exec();
+
+      await Promise.all(
+        admins.map((admin) =>
+          this.createNotification({
+            recipientId: admin._id,
+            buildingId,
+            title: 'Bưu kiện quá hạn lưu kho',
+            message: `Đơn hàng ${packageInfo.trackingNumber} của ${packageInfo.residentName} (Căn hộ: ${packageInfo.apartment || 'Chưa cập nhật'}) tại Ngăn #${packageInfo.boxNumber} (${packageInfo.lockerName}) đã quá hạn lưu kho.`,
+            category: NotificationCategory.PACKAGE,
+            type: NotificationType.PACKAGE_OVERDUE,
+            priority: NotificationPriority.NORMAL,
+            metadata: {
+              packageId: new Types.ObjectId(packageInfo.id),
+              trackingNumber: packageInfo.trackingNumber,
+              boxNumber: packageInfo.boxNumber,
+              apartment: packageInfo.apartment,
+            },
+          }),
+        ),
+      );
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi điều phối thông báo bưu kiện quá hạn cho Ban Quản Lý: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  // Phát sự kiện realtime báo bưu kiện sắp hết hạn hoặc quá hạn; lỗi phát sự kiện không được chặn việc gửi push
+  private emitPackageStorageAlert(
+    residentId: string,
+    eventName: 'PACKAGE_EXPIRING' | 'PACKAGE_OVERDUE',
+    packageInfo: { id: string; trackingNumber: string; boxNumber: number },
+  ): void {
+    try {
+      this.notificationsGateway.notifyPackageStorageAlert(
+        residentId,
+        eventName,
+        {
+          packageId: packageInfo.id,
+          trackingNumber: packageInfo.trackingNumber,
+          boxNumber: packageInfo.boxNumber,
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi phát sự kiện ${eventName}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

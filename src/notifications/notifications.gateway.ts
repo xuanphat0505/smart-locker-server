@@ -244,6 +244,19 @@ export class NotificationsGateway
     this.server.to(buildingRoom).emit('PACKAGE_NEW', eventPayload);
   }
 
+  // Báo tức thì cho cư dân có bưu kiện sắp hết hạn hoặc đã quá hạn lưu kho để app làm mới hộp thư
+  notifyPackageStorageAlert(
+    residentId: string,
+    eventName: 'PACKAGE_EXPIRING' | 'PACKAGE_OVERDUE',
+    payload: { packageId: string; trackingNumber: string; boxNumber: number },
+  ): void {
+    this.server.to(`resident_${residentId}`).emit(eventName, {
+      type: eventName,
+      ...payload,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   // Phát sóng thông báo chung tới toàn bộ cư dân và quản trị viên của tòa nhà
   broadcastToBuilding(buildingId: string, payload: any): void {
     const roomName = `building_${buildingId}`;
