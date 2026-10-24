@@ -168,6 +168,17 @@ export class Payment extends Document {
   @Prop({ required: true })
   expiresAt: Date;
 
+  // Trạng thái hóa đơn điện tử sandbox của thanh toán: PROCESSING, EMAILED hoặc FAILED kèm số hóa đơn, link PDF và lỗi gần nhất
+  @Prop({ type: Object, required: false })
+  eInvoice?: {
+    status: 'PROCESSING' | 'EMAILED' | 'FAILED';
+    referenceCode: string;
+    invoiceNumber?: string;
+    pdfUrl?: string;
+    lastError?: string;
+    emailedAt?: Date;
+  };
+
   // Dữ liệu thô từ webhook SePay phục vụ đối soát kiểm toán
   @Prop({ type: Object, select: false })
   rawTransactionData?: Record<string, any>;

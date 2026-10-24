@@ -9,6 +9,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, QueryFilter, Types } from 'mongoose';
 import { Payment, PaymentDocument } from './schemas/payment.schema';
+import { EInvoiceService } from '../einvoice/einvoice.service';
 import { Package } from '../packages/schemas/package.schema';
 import { Building } from '../buildings/schemas/building.schema';
 import { Locker } from '../lockers/schemas/locker.schema';
@@ -96,6 +97,7 @@ export class PaymentsService {
     private readonly mqttService: MqttService,
     private readonly activityLogsService: ActivityLogsService,
     private readonly notificationsService: NotificationsService,
+    private readonly eInvoiceService: EInvoiceService,
   ) {}
 
   // Tính phí lưu kho theo biểu phí của tòa nhà, người có gói tháng được miễn phí lâu hơn và phụ thu nhẹ hơn
@@ -635,6 +637,8 @@ export class PaymentsService {
         'Giao dịch không tồn tại, đã hết hạn hoặc đã được xử lý trước đó',
       );
     }
+
+    this.requestEInvoice(payment);
 
     // Xử lý kích hoạt hoặc gia hạn gói dịch vụ tháng
     if (payment.paymentType === PaymentType.MONTHLY_SUBSCRIPTION) {
@@ -1325,11 +1329,22 @@ export class PaymentsService {
     return this.completePaidPayment(payment, orderCode);
   }
 
+  // Yêu cầu phát hành hóa đơn điện tử chạy nền, không chờ và không để lỗi ảnh hưởng thanh toán
+  private requestEInvoice(payment: PaymentDocument): void {
+    void this.eInvoiceService.issueForPayment(payment).catch((error: unknown) => {
+      this.logger.error(
+        `Lỗi khi yêu cầu hóa đơn điện tử cho đơn #${payment.orderCode}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }
+
   // Xử lý nghiệp vụ sau khi đơn đã đủ tiền: kích hoạt gói tháng, mở tủ tại Kiosk hoặc gia hạn lưu kho từ xa
   private async completePaidPayment(
     payment: PaymentDocument,
     orderCode: number,
   ) {
+    this.requestEInvoice(payment);
+
     if (payment.paymentType === PaymentType.MONTHLY_SUBSCRIPTION) {
       const user = await this.userModel.findById(payment.userId);
       if (user) {

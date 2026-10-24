@@ -53,6 +53,7 @@ describe('PaymentsService.handleSepayWebhook (chuyển thiếu tiền)', () => {
       {} as never,
       activityLogs as never,
       notifications as never,
+      { issueForPayment: jest.fn().mockResolvedValue(undefined) } as never,
     );
     return { service, paymentModel, activityLogs, notifications };
   };
