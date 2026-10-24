@@ -307,17 +307,88 @@ export class MailService {
     return this.sendMail(residentEmail, subject, htmlContent);
   }
 
+  // Gửi thư văn bản đơn giản báo hóa đơn điện tử thử nghiệm, kèm file PDF (nếu có) và đường dẫn tải hóa đơn
+  async sendInvoiceEmail(
+    residentEmail: string | undefined,
+    residentName: string,
+    invoice: {
+      invoiceNumber: string;
+      amount: number;
+      description: string;
+      pdfUrl: string;
+      issuedAt: Date;
+      pdf?: { filename: string; content: Buffer };
+    },
+  ): Promise<boolean> {
+    if (!residentEmail) {
+      return false;
+    }
+
+    const subject = `[SMART LOCKER] Hóa đơn điện tử số ${invoice.invoiceNumber} (thử nghiệm)`;
+    const issuedText = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+      .format(invoice.issuedAt)
+      .replace(', ', ' ');
+    const amountText = `${invoice.amount.toLocaleString('vi-VN')} VNĐ`;
+
+    const lines = [
+      `Kính gửi Quý khách ${residentName},`,
+      `Chúng tôi xin gửi Quý khách hóa đơn điện tử số ${invoice.invoiceNumber} lập ngày ${issuedText}.`,
+      `Nội dung: ${invoice.description}. Số tiền: ${amountText}.`,
+      invoice.pdf
+        ? 'Hóa đơn điện tử của Quý khách được gửi qua mail theo file kèm theo.'
+        : 'Hóa đơn điện tử của Quý khách có thể tải theo đường dẫn bên dưới.',
+      /^https?:\/\//i.test(invoice.pdfUrl)
+        ? `Quý khách có thể xem và tải hóa đơn tại: ${invoice.pdfUrl}`
+        : '',
+      'Xin trân trọng cảm ơn Quý khách đã sử dụng dịch vụ của chúng tôi!',
+      '',
+      'Lưu ý: đây là hóa đơn thử nghiệm (sandbox), không có giá trị pháp lý và không được gửi tới cơ quan thuế.',
+    ].filter((line, index, all) => line !== '' || all[index - 1] !== '');
+
+    return this.sendMail(
+      residentEmail,
+      subject,
+      '',
+      {
+        text: lines.join('\n'),
+        attachments: invoice.pdf
+          ? [
+              {
+                filename: invoice.pdf.filename,
+                content: invoice.pdf.content,
+                contentType: 'application/pdf',
+              },
+            ]
+          : undefined,
+      },
+    );
+  }
+
   // Phương thức phụ trợ thực hiện gửi thư qua Nodemailer với xử lý lỗi an toàn
   private async sendMail(
     to: string | string[],
     subject: string,
     html: string,
+    options: {
+      text?: string;
+      attachments?: { filename: string; content: Buffer; contentType?: string }[];
+    } = {},
   ): Promise<boolean> {
     const toFormatted = Array.isArray(to) ? to.join(', ') : to;
+    const { text, attachments } = options;
     try {
       if (!this.transporter) {
         this.logger.log(
-          `[MÔ PHỎNG EMAIL] Đã gửi tới: ${toFormatted} | Tiêu đề: "${subject}"`,
+          `[MÔ PHỎNG EMAIL] Đã gửi tới: ${toFormatted} | Tiêu đề: "${subject}"${attachments?.length ? ` | Đính kèm: ${attachments.map((item) => item.filename).join(', ')}` : ''}`,
         );
         return true;
       }
@@ -326,7 +397,8 @@ export class MailService {
         from: this.fromEmail,
         to: toFormatted,
         subject,
-        html,
+        ...(text !== undefined ? { text } : { html }),
+        attachments,
       });
 
       this.logger.log(
