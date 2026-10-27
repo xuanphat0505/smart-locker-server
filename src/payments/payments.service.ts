@@ -16,6 +16,7 @@ import { Locker } from '../lockers/schemas/locker.schema';
 import { Box } from '../lockers/schemas/box.schema';
 import { User } from '../users/schemas/user.schema';
 import { PackageStatus } from '../packages/enums/package.enums';
+import { claimPackageForPickup } from '../packages/utils/package-claim';
 import {
   BoxStatus,
   DoorStatus,
@@ -787,13 +788,24 @@ export class PaymentsService {
     }
     const boxNumber = payment.boxNumber ?? pkg.boxNumber;
 
+    const alreadyProcessedResult = {
+      success: true,
+      message: 'Bưu kiện đã được hoàn tất mở tủ lấy hàng trước đó',
+      boxNumber,
+      alreadyProcessed: true,
+    };
     if (pkg.status === PackageStatus.PICKED_UP) {
-      return {
-        success: true,
-        message: 'Bưu kiện đã được hoàn tất mở tủ lấy hàng trước đó',
-        boxNumber,
-        alreadyProcessed: true,
-      };
+      return alreadyProcessedResult;
+    }
+
+    // Chiếm quyền nhận kiện và cộng phí bằng một lệnh cập nhật duy nhất để webhook và thiết bị gọi song song không mở tủ hai lần
+    const claimedPkg = await claimPackageForPickup(
+      this.packageModel,
+      pkg._id,
+      { totalFeePaid: payment.amount },
+    );
+    if (!claimedPkg) {
+      return alreadyProcessedResult;
     }
 
     const lockerId = payment.lockerId || pkg.lockerId;
@@ -811,11 +823,6 @@ export class PaymentsService {
       box.hasItem = false;
       await box.save();
     }
-
-    pkg.status = PackageStatus.PICKED_UP;
-    pkg.pickedUpAt = new Date();
-    pkg.totalFeePaid = (pkg.totalFeePaid || 0) + payment.amount;
-    await pkg.save();
 
     await this.activityLogsService.recordLockerAction({
       locker: locker ?? {

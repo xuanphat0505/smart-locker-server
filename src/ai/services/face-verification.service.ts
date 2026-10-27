@@ -15,6 +15,7 @@ import { Locker } from '../../lockers/schemas/locker.schema';
 import { Box } from '../../lockers/schemas/box.schema';
 import { User } from '../../users/schemas/user.schema';
 import { PackageStatus } from '../../packages/enums/package.enums';
+import { claimPackageForPickup } from '../../packages/utils/package-claim';
 import {
   BoxStatus,
   DoorStatus,
@@ -161,6 +162,31 @@ export class FaceVerificationService {
     };
   }
 
+  // Lưu ảnh nhận được từ camera trạm tủ phục vụ gỡ lỗi, mã trạm được làm sạch trước khi đưa vào tên file
+  private saveDebugCapture(lockerCode: string, imageBuffer: Buffer): void {
+    try {
+      const safeLockerCode = lockerCode.replace(/[^A-Za-z0-9_-]/g, '_');
+      const debugDir = path.join(process.cwd(), 'uploads/debug');
+      const historyDir = path.join(debugDir, 'captures');
+      fs.mkdirSync(historyDir, { recursive: true });
+
+      const latestCapturePath = path.join(debugDir, 'latest_cam_capture.jpg');
+      fs.writeFileSync(latestCapturePath, imageBuffer);
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.writeFileSync(
+        path.join(historyDir, `capture_${safeLockerCode}_${timestamp}.jpg`),
+        imageBuffer,
+      );
+
+      this.logger.log(
+        `[CAMERA_IN] Đã nhận ảnh từ trạm ${safeLockerCode} (${imageBuffer.length} bytes) -> Đã lưu tại: ${latestCapturePath}`,
+      );
+    } catch (saveErr) {
+      this.logger.warn(`Không thể lưu ảnh debug camera: ${saveErr}`);
+    }
+  }
+
   // Xac thuc khuon mat tu camera trạm tu Kiosk va thuc hien mo ngan tu tuong ung
   async verifyAndUnlock(
     lockerCode: string,
@@ -168,30 +194,9 @@ export class FaceVerificationService {
   ): Promise<VerifyFaceHardwareResult> {
     const startTime = Date.now();
 
-    // Lưu ảnh nhận được từ camera trạm tủ phục vụ kiểm tra và đối soát chất lượng ảnh
-    try {
-      const debugDir = path.join(process.cwd(), 'uploads/debug');
-      if (!fs.existsSync(debugDir)) {
-        fs.mkdirSync(debugDir, { recursive: true });
-      }
-      const latestCapturePath = path.join(debugDir, 'latest_cam_capture.jpg');
-      fs.writeFileSync(latestCapturePath, imageBuffer);
-
-      const historyDir = path.join(debugDir, 'captures');
-      if (!fs.existsSync(historyDir)) {
-        fs.mkdirSync(historyDir, { recursive: true });
-      }
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      fs.writeFileSync(
-        path.join(historyDir, `capture_${lockerCode}_${timestamp}.jpg`),
-        imageBuffer,
-      );
-
-      this.logger.log(
-        `[CAMERA_IN] Đã nhận ảnh từ trạm ${lockerCode} (${imageBuffer.length} bytes) -> Đã lưu tại: ${latestCapturePath}`,
-      );
-    } catch (saveErr) {
-      this.logger.warn(`Không thể lưu ảnh debug camera: ${saveErr}`);
+    // Chỉ lưu ảnh camera để gỡ lỗi khi bật SAVE_FACE_DEBUG_IMAGES, vì đây là dữ liệu sinh trắc học của cả người ngoài
+    if (process.env.SAVE_FACE_DEBUG_IMAGES === 'true') {
+      this.saveDebugCapture(lockerCode, imageBuffer);
     }
 
     // Buoc 1: Phat hien khuon mat bang YuNet va kiem tra chong gia mao MiniFASNet
@@ -360,6 +365,26 @@ export class FaceVerificationService {
       };
     }
 
+    // Chiem quyen nhan kien bang mot lenh cap nhat duy nhat de hai yeu cau dong thoi khong cung mo tu
+    const claimedPkg = await claimPackageForPickup(
+      this.packageModel,
+      matchedPkg._id,
+    );
+    if (!claimedPkg) {
+      throw new BadRequestException(
+        'Buu kien da duoc nhan truoc do boi mot yeu cau khac',
+      );
+    }
+
+    // Phat lenh mo khoa Solenoid toi phan cung ESP32 qua MQTT ngay sau khi chiem quyen nhan kien
+    this.mqttService
+      .publishDoorUnlock(locker.code, matchedPkg.boxNumber)
+      .catch((err) => {
+        this.logger.error(
+          `Loi khi phat lenh MQTT mo ngan ${matchedPkg.boxNumber} tai tram ${locker.code}: ${err}`,
+        );
+      });
+
     // Buoc 6: Giai phong ngan tu ve trang thai kha dung
     const box = await this.boxModel.findById(matchedPkg.boxId);
     if (box) {
@@ -369,11 +394,6 @@ export class FaceVerificationService {
       box.hasItem = false;
       await box.save();
     }
-
-    // Cap nhat trang thai buu kien da duoc nhan thanh cong
-    matchedPkg.status = PackageStatus.PICKED_UP;
-    matchedPkg.pickedUpAt = new Date();
-    await matchedPkg.save();
 
     // Ghi nhat ky su kien mo tu bang Face ID
     await this.activityLogsService.recordLockerAction({
@@ -395,15 +415,6 @@ export class FaceVerificationService {
         verificationMethod: 'AI_FACE_ID',
       },
     });
-
-    // Phat lenh mo khoa Solenoid toi phan cung ESP32 qua MQTT
-    this.mqttService
-      .publishDoorUnlock(locker.code, matchedPkg.boxNumber)
-      .catch((err) => {
-        this.logger.error(
-          `Loi khi phat lenh MQTT mo ngan ${matchedPkg.boxNumber} tai tram ${locker.code}: ${err}`,
-        );
-      });
 
     const totalInferenceTime = Date.now() - startTime;
     this.logger.log(
