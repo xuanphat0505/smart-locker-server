@@ -10,6 +10,7 @@ import {
   Request,
   UseInterceptors,
   UploadedFile,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
@@ -30,7 +31,9 @@ import {
 } from './dto/admin-package.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Throttle } from '@nestjs/throttler';
 import { PickupAuthGuard } from '../auth/guards/pickup-auth.guard';
+import { PickupThrottlerGuard } from '../auth/guards/pickup-throttler.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
@@ -50,6 +53,12 @@ import {
   ApiReturnPackageDoc,
   ApiResendOtpDoc,
 } from './swagger/package.swagger';
+
+// Giới hạn lấy hàng từ ứng dụng: 5 lần mỗi phút và 30 lần mỗi giờ để chặn dò mã OTP
+const PICKUP_THROTTLE = {
+  default: { ttl: 60_000, limit: 5 },
+  hourly: { ttl: 3_600_000, limit: 30 },
+};
 
 @ApiTags('Packages')
 @Controller('packages')
@@ -89,36 +98,47 @@ export class PackagesController {
 
   // Nhập mã OTP 6 số tại màn hình trạm tủ hoặc ứng dụng di động để mở khóa lấy bưu kiện
   @Post('pickup/otp')
-  @UseGuards(PickupAuthGuard)
+  @UseGuards(PickupAuthGuard, PickupThrottlerGuard)
+  @Throttle(PICKUP_THROTTLE)
   @ApiPickupOtpDoc()
   async pickupWithOtp(
     @Body() dto: PickupOtpDto,
-    @Request() req: { authSource: string },
+    @Request() req: { authSource: string; user?: { sub?: string } },
   ) {
-    return this.packagesService.pickupWithOtp(dto, req?.authSource);
+    return this.packagesService.pickupWithOtp(dto, req?.authSource, req?.user?.sub);
   }
 
   // Quét mã QR token trước camera trạm tủ hoặc ứng dụng di động để mở khóa lấy bưu kiện
   @Post('pickup/qr')
-  @UseGuards(PickupAuthGuard)
+  @UseGuards(PickupAuthGuard, PickupThrottlerGuard)
+  @Throttle(PICKUP_THROTTLE)
   @ApiPickupQrDoc()
   async pickupWithQr(
     @Body() dto: PickupQrDto,
-    @Request() req: { authSource: string },
+    @Request() req: { authSource: string; user?: { sub?: string } },
   ) {
-    return this.packagesService.pickupWithQr(dto, req?.authSource);
+    return this.packagesService.pickupWithQr(dto, req?.authSource, req?.user?.sub);
   }
 
   // Nhận diện khuôn mặt cư dân trước camera trạm tủ để mở khóa lấy bưu kiện
   @Post('pickup/face')
-  @UseGuards(PickupAuthGuard)
+  @UseGuards(PickupAuthGuard, PickupThrottlerGuard)
+  @Throttle(PICKUP_THROTTLE)
   @ApiPickupFaceDoc()
   @UseInterceptors(FileInterceptor('file'))
   async pickupWithFace(
+    @Request() req: { authSource: string },
     @UploadedFile() file?: Express.Multer.File,
     @Body() dto?: PickupFaceDto,
     @Headers('x-locker-code') lockerCodeHeader?: string,
   ) {
+    // Ảnh khuôn mặt chỉ được nhận từ camera của trạm tủ, không nhận từ ứng dụng di động
+    if (req?.authSource !== 'DEVICE') {
+      throw new ForbiddenException(
+        'Nhận diện khuôn mặt chỉ khả dụng trực tiếp tại trạm tủ',
+      );
+    }
+
     const finalDto: PickupFaceDto = {
       ...(dto || { lockerCode: '' }),
       lockerCode: dto?.lockerCode || lockerCodeHeader || '',

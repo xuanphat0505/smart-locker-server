@@ -5,6 +5,8 @@ import {
   BadRequestException,
   ForbiddenException,
   UnauthorizedException,
+  HttpException,
+  HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -37,6 +39,9 @@ import { PaymentsService } from '../payments/payments.service';
 import { PaymentType } from '../payments/enums/payment.enums';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { generateUniquePinCode } from './utils/pin-code.util';
+import { PickupAttemptLimiter } from './utils/pickup-attempt-limiter';
+import { claimPackageForPickup } from './utils/package-claim';
+import type { VerifyFaceHardwareResult } from '../ai/interfaces/face-verification.interface';
 import { normalizeShipperName, resolveSessionName } from './utils/shipper-name.util';
 import {
   EXPIRY_WARNING_HOURS,
@@ -71,9 +76,31 @@ import {
   verifyOtp,
 } from './utils/otp.util';
 
+// Khóa mở tủ bằng ứng dụng 15 phút khi một tài khoản nhập sai 5 lần trong 15 phút ở cùng một trạm
+const APP_PICKUP_MAX_FAILURES = 5;
+const APP_PICKUP_WINDOW_MS = 15 * 60 * 1000;
+const APP_PICKUP_LOCK_MS = 15 * 60 * 1000;
+
+// Khóa nhận diện khuôn mặt tại một trạm 5 phút khi có 10 lần thất bại trong 5 phút
+const FACE_PICKUP_MAX_FAILURES = 10;
+const FACE_PICKUP_WINDOW_MS = 5 * 60 * 1000;
+const FACE_PICKUP_LOCK_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class PackagesService {
   private readonly logger = new Logger(PackagesService.name);
+
+  private readonly appPickupLimiter = new PickupAttemptLimiter(
+    APP_PICKUP_MAX_FAILURES,
+    APP_PICKUP_WINDOW_MS,
+    APP_PICKUP_LOCK_MS,
+  );
+
+  private readonly facePickupLimiter = new PickupAttemptLimiter(
+    FACE_PICKUP_MAX_FAILURES,
+    FACE_PICKUP_WINDOW_MS,
+    FACE_PICKUP_LOCK_MS,
+  );
 
   constructor(
     @InjectModel(Package.name) private readonly packageModel: Model<Package>,
@@ -91,6 +118,31 @@ export class PackagesService {
     private readonly smsService: SmsService,
     private readonly configService: ConfigService,
   ) {}
+
+  // Tạo khóa đếm lần sai theo trạm và tài khoản, trả về null với Kiosk hoặc khi thiếu mã tài khoản
+  private buildAppAttemptKey(
+    lockerCode: string,
+    authSource?: string,
+    actorId?: string,
+  ): string | null {
+    if (authSource === 'DEVICE' || !actorId) return null;
+    return `${lockerCode}:${actorId}`;
+  }
+
+  // Chặn thao tác khi khóa đếm đang bị khóa do nhập sai quá nhiều lần
+  private assertNotLockedOut(
+    limiter: PickupAttemptLimiter,
+    key: string | null,
+  ): void {
+    if (!key) return;
+    const remainingSeconds = limiter.getRemainingLockSeconds(key);
+    if (remainingSeconds > 0) {
+      throw new HttpException(
+        `Bạn đã thử sai quá nhiều lần. Vui lòng thử lại sau ${Math.ceil(remainingSeconds / 60)} phút`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
 
   // Khóa bí mật dùng để băm mã OTP, ưu tiên khóa riêng và dự phòng bằng khóa JWT
   private getOtpSecret(): string {
@@ -653,7 +705,7 @@ export class PackagesService {
   }
 
   // Xác thực mã OTP 6 số tại màn hình trạm tủ hoặc ứng dụng di động để mở khóa lấy đồ
-  async pickupWithOtp(dto: PickupOtpDto, authSource?: string) {
+  async pickupWithOtp(dto: PickupOtpDto, authSource?: string, actorId?: string) {
     const isKiosk = authSource === 'DEVICE';
 
     const locker = await this.lockerModel
@@ -665,6 +717,9 @@ export class PackagesService {
     if (!locker) {
       throw new NotFoundException(`Trạm tủ với mã ${dto.lockerCode} không tồn tại`);
     }
+
+    const attemptKey = this.buildAppAttemptKey(locker.code, authSource, actorId);
+    this.assertNotLockedOut(this.appPickupLimiter, attemptKey);
 
     // Kiểm tra tính hợp lệ của mã QR Token động nếu được gửi kèm để chứng minh cự ly gần
     if (dto.qrProofToken) {
@@ -686,8 +741,10 @@ export class PackagesService {
     });
 
     if (!pkg) {
+      if (attemptKey) this.appPickupLimiter.recordFailure(attemptKey);
       throw new BadRequestException('Mã OTP không chính xác hoặc bưu kiện đã được lấy trước đó');
     }
+    if (attemptKey) this.appPickupLimiter.reset(attemptKey);
 
     if (pkg.lockedUntil && pkg.lockedUntil > new Date()) {
       throw new BadRequestException(
@@ -744,6 +801,19 @@ export class PackagesService {
       };
     }
 
+    // Chiếm quyền nhận kiện bằng một lệnh cập nhật duy nhất để hai yêu cầu đồng thời không cùng mở tủ
+    const claimedPkg = await claimPackageForPickup(this.packageModel, pkg._id);
+    if (!claimedPkg) {
+      throw new BadRequestException('Mã OTP không chính xác hoặc bưu kiện đã được lấy trước đó');
+    }
+
+    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT ngay sau khi chiếm quyền nhận kiện
+    this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber).catch((err) => {
+      this.logger.error(
+        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
+      );
+    });
+
     const box = await this.boxModel.findById(pkg.boxId);
     if (box) {
       box.status = BoxStatus.AVAILABLE;
@@ -752,10 +822,6 @@ export class PackagesService {
       box.hasItem = false;
       await box.save();
     }
-
-    pkg.status = PackageStatus.PICKED_UP;
-    pkg.pickedUpAt = new Date();
-    await pkg.save();
 
     await this.activityLogsService.recordLockerAction({
       locker,
@@ -773,20 +839,13 @@ export class PackagesService {
       metadata: dto.qrProofToken ? { verificationMethod: 'DYNAMIC_QR' } : undefined,
     });
 
-    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
-    this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber).catch((err) => {
-      this.logger.error(
-        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
-      );
-    });
-
     return {
       message: `Xác thực mã OTP thành công. Cửa ngăn tủ số ${pkg.boxNumber} đã mở!`,
       package: {
         _id: String(pkg._id),
         trackingNumber: pkg.trackingNumber,
-        status: pkg.status,
-        pickedUpAt: pkg.pickedUpAt,
+        status: claimedPkg.status,
+        pickedUpAt: claimedPkg.pickedUpAt,
       },
       boxNumber: pkg.boxNumber,
       action: 'OPEN_DOOR',
@@ -794,7 +853,7 @@ export class PackagesService {
   }
 
   // Quét mã QR token trước camera của trạm tủ hoặc ứng dụng di động để mở khóa lấy đồ
-  async pickupWithQr(dto: PickupQrDto, authSource?: string) {
+  async pickupWithQr(dto: PickupQrDto, authSource?: string, actorId?: string) {
     const isKiosk = authSource === 'DEVICE';
 
     const locker = await this.lockerModel.findOne({
@@ -805,6 +864,9 @@ export class PackagesService {
       throw new NotFoundException(`Trạm tủ với mã ${dto.lockerCode} không tồn tại`);
     }
 
+    const attemptKey = this.buildAppAttemptKey(locker.code, authSource, actorId);
+    this.assertNotLockedOut(this.appPickupLimiter, attemptKey);
+
     const pkg = await this.packageModel.findOne({
       lockerId: locker._id,
       qrCodeToken: dto.qrCodeToken.trim(),
@@ -814,8 +876,10 @@ export class PackagesService {
     });
 
     if (!pkg) {
+      if (attemptKey) this.appPickupLimiter.recordFailure(attemptKey);
       throw new BadRequestException('Mã QR không hợp lệ hoặc bưu kiện đã được lấy trước đó');
     }
+    if (attemptKey) this.appPickupLimiter.reset(attemptKey);
 
     // Kiểm tra phí dịch vụ và tính hợp lệ của thời hạn nhận hàng
     const feeInfo = await this.paymentsService.checkFee(String(pkg._id));
@@ -866,6 +930,19 @@ export class PackagesService {
       };
     }
 
+    // Chiếm quyền nhận kiện bằng một lệnh cập nhật duy nhất để hai yêu cầu đồng thời không cùng mở tủ
+    const claimedPkg = await claimPackageForPickup(this.packageModel, pkg._id);
+    if (!claimedPkg) {
+      throw new BadRequestException('Mã QR không hợp lệ hoặc bưu kiện đã được lấy trước đó');
+    }
+
+    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT ngay sau khi chiếm quyền nhận kiện
+    this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber).catch((err) => {
+      this.logger.error(
+        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
+      );
+    });
+
     const box = await this.boxModel.findById(pkg.boxId);
     if (box) {
       box.status = BoxStatus.AVAILABLE;
@@ -874,10 +951,6 @@ export class PackagesService {
       box.hasItem = false;
       await box.save();
     }
-
-    pkg.status = PackageStatus.PICKED_UP;
-    pkg.pickedUpAt = new Date();
-    await pkg.save();
 
     await this.activityLogsService.recordLockerAction({
       locker,
@@ -894,24 +967,43 @@ export class PackagesService {
       },
     });
 
-    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT
-    this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber).catch((err) => {
-      this.logger.error(
-        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
-      );
-    });
-
     return {
       message: `Quét mã QR thành công. Cửa ngăn tủ số ${pkg.boxNumber} đã mở!`,
       package: {
         _id: String(pkg._id),
         trackingNumber: pkg.trackingNumber,
-        status: pkg.status,
-        pickedUpAt: pkg.pickedUpAt,
+        status: claimedPkg.status,
+        pickedUpAt: claimedPkg.pickedUpAt,
       },
       boxNumber: pkg.boxNumber,
       action: 'OPEN_DOOR',
     };
+  }
+
+  // Nhận diện khuôn mặt và khóa tạm trạm tủ khi liên tiếp bị từ chối vì sai khuôn mặt hoặc khuôn mặt giả
+  private async verifyFaceWithLockout(
+    lockerCode: string,
+    imageBuffer: Buffer,
+  ): Promise<VerifyFaceHardwareResult> {
+    const faceKey = lockerCode.trim().toUpperCase();
+    this.assertNotLockedOut(this.facePickupLimiter, faceKey);
+
+    try {
+      const result = await this.faceVerificationService.verifyAndUnlock(
+        lockerCode,
+        imageBuffer,
+      );
+      this.facePickupLimiter.reset(faceKey);
+      return result;
+    } catch (error) {
+      if (
+        error instanceof UnauthorizedException ||
+        error instanceof ForbiddenException
+      ) {
+        this.facePickupLimiter.recordFailure(faceKey);
+      }
+      throw error;
+    }
   }
 
   // Nhận diện khuôn mặt cư dân trước camera trạm tủ để mở khóa lấy bưu kiện
@@ -935,7 +1027,7 @@ export class PackagesService {
       );
     }
 
-    const result = await this.faceVerificationService.verifyAndUnlock(dto.lockerCode, imageBuffer);
+    const result = await this.verifyFaceWithLockout(dto.lockerCode, imageBuffer);
 
     if (result.requiresPayment) {
       return {
