@@ -52,6 +52,7 @@ import {
   ApiChangePasswordDoc,
   ApiUpdatePushTokenDoc,
   ApiEnrollFaceDoc,
+  ApiRemoveFaceDoc,
   ApiUpdateUserByAdminDoc,
 } from './swagger/user.swagger';
 
@@ -144,6 +145,18 @@ export class UsersController {
       statusCode: HttpStatus.OK,
       message: 'Đăng ký nhận diện khuôn mặt Face ID thành công',
       data: result,
+    };
+  }
+
+  // Xóa dữ liệu khuôn mặt Face ID đã đăng ký của người dùng đang đăng nhập
+  @Delete('me/face')
+  @Roles(Role.RESIDENT, Role.SYSTEM_ADMIN)
+  @ApiRemoveFaceDoc()
+  async removeFace(@Request() req: { user: AuthenticatedUser }) {
+    await this.usersService.removeFace(req.user.userId);
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Đã xóa dữ liệu nhận diện khuôn mặt Face ID',
     };
   }
 

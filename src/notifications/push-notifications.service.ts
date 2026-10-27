@@ -1,4 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User } from '../users/schemas/user.schema';
+
+// Kết quả Expo trả về cho từng tin nhắn đã gửi
+interface ExpoPushTicket {
+  status: 'ok' | 'error';
+  details?: { error?: string };
+}
 
 export interface ExpoPushPayload {
   to: string | string[];
@@ -20,10 +29,43 @@ export class PushNotificationsService {
   private readonly logger = new Logger(PushNotificationsService.name);
   private readonly expoPushUrl = 'https://exp.host/--/api/v2/push/send';
 
+  constructor(@InjectModel(User.name) private userModel: Model<User>) {}
+
   // Kiểm tra định dạng chuỗi token có hợp lệ theo chuẩn Expo Push Token hay không
   isExpoPushToken(token: unknown): boolean {
     if (typeof token !== 'string') return false;
     return /^(Expo(nent)?PushToken)\[.*\]$/.test(token.trim());
+  }
+
+  // Xóa khỏi người dùng các token mà Expo báo thiết bị không còn đăng ký, vì ticket trả về cùng thứ tự với tin nhắn đã gửi
+  private async removeUnregisteredTokens(
+    tokens: string[],
+    tickets?: ExpoPushTicket[],
+  ): Promise<void> {
+    if (!Array.isArray(tickets)) return;
+
+    const deadTokens = tokens.filter(
+      (_, index) =>
+        tickets[index]?.status === 'error' &&
+        tickets[index]?.details?.error === 'DeviceNotRegistered',
+    );
+    if (deadTokens.length === 0) return;
+
+    try {
+      await this.userModel
+        .updateMany(
+          { devicePushToken: { $in: deadTokens } },
+          { $unset: { devicePushToken: 1 } },
+        )
+        .exec();
+      this.logger.log(
+        `Đã xóa ${deadTokens.length} Expo Push Token không còn hợp lệ (DeviceNotRegistered)`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Không xóa được token push hết hạn: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   // Gửi thông báo đẩy đến một hoặc nhiều thiết bị di động sử dụng Expo Push API
@@ -74,7 +116,9 @@ export class PushNotificationsService {
           continue;
         }
 
-        await response.json();
+        const result = (await response.json()) as { data?: ExpoPushTicket[] };
+        const batchTokens = messages.map((message) => message.to);
+        await this.removeUnregisteredTokens(batchTokens, result.data);
       }
 
       if (allSucceeded) {

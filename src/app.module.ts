@@ -8,6 +8,7 @@ import { DatabaseModule } from './database/database.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { BuildingsModule } from './buildings/buildings.module';
 import { LockersModule } from './lockers/lockers.module';
 import { PackagesModule } from './packages/packages.module';
@@ -29,6 +30,8 @@ import { IssuesModule } from './issues/issues.module';
       envFilePath: '.env',
     }),
     ScheduleModule.forRoot(),
+    // Giới hạn mặc định 60 request mỗi phút cho mỗi IP, chỉ có hiệu lực ở controller gắn ThrottlerGuard
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
     DatabaseModule,
     UsersModule,
     AuthModule,
