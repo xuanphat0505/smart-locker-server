@@ -1,5 +1,6 @@
 import { Controller, Request, Post, UseGuards, Body } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
@@ -36,7 +37,11 @@ import {
   Api2faAuthenticateDoc,
 } from './swagger/auth.swagger';
 
+// Giới hạn chặt cho các endpoint dễ bị dò mật khẩu hoặc lạm dụng gửi mail: 5 lần mỗi phút
+const STRICT_THROTTLE = { default: { ttl: 60_000, limit: 5 } };
+
 @ApiTags('Auth')
+@UseGuards(ThrottlerGuard)
 @Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) {}
@@ -60,6 +65,7 @@ export class AuthController {
   }
 
   // Đăng nhập tài khoản bằng email và mật khẩu
+  @Throttle(STRICT_THROTTLE)
   @UseGuards(LocalAuthGuard)
   @Post('login')
   @ApiLoginDoc()
@@ -85,6 +91,7 @@ export class AuthController {
   }
 
   // Tiếp nhận yêu cầu quên mật khẩu và gửi email chứa mã OTP
+  @Throttle(STRICT_THROTTLE)
   @Post('forgot-password')
   @ApiForgotPasswordDoc()
   async forgotPassword(
@@ -94,6 +101,7 @@ export class AuthController {
   }
 
   // Đặt lại mật khẩu mới cho tài khoản thông qua mã OTP xác thực
+  @Throttle(STRICT_THROTTLE)
   @Post('reset-password')
   @ApiResetPasswordDoc()
   async resetPassword(
@@ -135,6 +143,7 @@ export class AuthController {
   }
 
   // Xác thực bước thứ hai khi đăng nhập bằng mã TOTP hoặc mã khôi phục
+  @Throttle(STRICT_THROTTLE)
   @Post('2fa/authenticate')
   @Api2faAuthenticateDoc()
   async authenticate2fa(

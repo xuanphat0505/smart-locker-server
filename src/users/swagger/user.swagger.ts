@@ -389,6 +389,25 @@ export function ApiEnrollFaceDoc() {
   );
 }
 
+// Tài liệu Swagger cho endpoint xóa dữ liệu Face ID của người dùng đang đăng nhập
+export function ApiRemoveFaceDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Xóa dữ liệu nhận diện khuôn mặt Face ID',
+      description:
+        'Xóa vector đặc trưng khuôn mặt và tắt Face ID của tài khoản đang đăng nhập. Sau khi xóa không thể mở tủ bằng khuôn mặt cho đến khi đăng ký lại',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Đã xóa dữ liệu Face ID',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+  );
+}
+
 // Tài liệu Swagger cho endpoint quản trị viên sửa thông tin và khóa/mở khóa tài khoản người dùng
 export function ApiUpdateUserByAdminDoc() {
   return applyDecorators(

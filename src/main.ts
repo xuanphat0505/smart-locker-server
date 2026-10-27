@@ -4,9 +4,11 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
+import { assertRequiredEnv } from './common/utils/required-env';
 
 // Khởi tạo ứng dụng NestJS cấu hình pipe kiểm thực dữ liệu và tài liệu OpenAPI Swagger
 async function bootstrap() {
+  assertRequiredEnv();
   const configService = new ConfigService();
 
   const app = await NestFactory.create(AppModule);

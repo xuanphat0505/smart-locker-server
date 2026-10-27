@@ -329,8 +329,7 @@ export class AuthService {
 
   // Cấp mới cặp token khi Access Token hết hạn thông qua Refresh Token hợp lệ
   async refreshTokens(dto: RefreshTokenDto): Promise<TokensResponse> {
-    const refreshSecret =
-      this.configService.get<string>('JWT_REFRESH_SECRET_KEY') || 'default_refresh_secret_key';
+    const refreshSecret = this.configService.getOrThrow<string>('JWT_REFRESH_SECRET_KEY');
 
     let payload: JwtPayload;
     try {
@@ -430,9 +429,10 @@ export class AuthService {
     };
   }
 
-  // Đăng xuất và xóa mã băm Refresh Token trong cơ sở dữ liệu
+  // Đăng xuất, xóa mã băm Refresh Token và push token của thiết bị trong cơ sở dữ liệu
   async logout(userId: string): Promise<{ message: string }> {
     await this.usersService.updateRefreshTokenHash(userId, null);
+    await this.usersService.clearPushToken(userId);
     return { message: 'Đăng xuất tài khoản thành công' };
   }
 

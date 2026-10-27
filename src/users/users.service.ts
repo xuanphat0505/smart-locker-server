@@ -697,6 +697,13 @@ export class UsersService {
       .exec();
   }
 
+  // Xóa push token của thiết bị để máy đã đăng xuất không còn nhận thông báo
+  async clearPushToken(userId: string): Promise<void> {
+    await this.userModel
+      .updateOne({ _id: userId }, { $unset: { devicePushToken: 1 } })
+      .exec();
+  }
+
   // Tìm kiếm thông tin người dùng bao gồm cả mã băm Refresh Token để xác thực
   async findByIdWithRefreshToken(id: string): Promise<User | null> {
     return this.userModel
@@ -899,5 +906,17 @@ export class UsersService {
     }
 
     return this.faceVerificationService.enrollFace(userId, imageBuffers);
+  }
+
+  // Xóa toàn bộ dữ liệu khuôn mặt Face ID đã đăng ký, gồm vector đặc trưng và trạng thái kích hoạt
+  async removeFace(userId: string): Promise<void> {
+    const result = await this.userModel.updateOne(
+      { _id: userId },
+      { $set: { faceAuth: { enabled: false, embedding: [], enrolledAt: null } } },
+    );
+
+    if (result.matchedCount === 0) {
+      throw new NotFoundException('Không tìm thấy thông tin người dùng');
+    }
   }
 }

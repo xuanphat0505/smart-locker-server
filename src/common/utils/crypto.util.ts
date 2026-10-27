@@ -3,13 +3,18 @@ import * as crypto from 'crypto';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 
-// Lấy khóa mã hóa 32 bytes từ biến môi trường hoặc tự động phái sinh khóa an toàn
+// Lấy khóa mã hóa 32 bytes từ biến môi trường, thiếu cả hai khóa thì báo lỗi thay vì dùng khóa mặc định
 function getEncryptionKey(customKey?: string): Buffer {
   const keyString =
     customKey ||
     process.env.TWO_FACTOR_ENCRYPTION_KEY ||
-    process.env.JWT_ACCESS_SECRET_KEY ||
-    'smart-locker-default-fallback-key-32b!';
+    process.env.JWT_ACCESS_SECRET_KEY;
+
+  if (!keyString) {
+    throw new Error(
+      'Thiếu TWO_FACTOR_ENCRYPTION_KEY hoặc JWT_ACCESS_SECRET_KEY để mã hóa dữ liệu',
+    );
+  }
 
   return crypto.createHash('sha256').update(keyString).digest();
 }
