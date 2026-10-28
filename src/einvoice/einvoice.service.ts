@@ -7,15 +7,9 @@ import { Package } from '../packages/schemas/package.schema';
 import { User } from '../users/schemas/user.schema';
 import { MailService } from '../mail/mail.service';
 import { SepayEInvoiceClient } from './sepay-einvoice.client';
-import {
-  CreateCheckResult,
-  EInvoiceApiError,
-  IssuedInvoice,
-} from './einvoice.types';
-import {
-  buildInvoicePayload,
-  buildReferenceCode,
-} from './utils/build-invoice-payload.util';
+import { CreateCheckResult, EInvoiceApiError, IssuedInvoice } from './einvoice.types';
+import { buildInvoicePayload, buildReferenceCode } from './utils/build-invoice-payload.util';
+import { getErrorMessage } from '../common/utils/text.util';
 
 const POLL_ATTEMPTS = 5;
 const POLL_INTERVAL_MS = 2500;
@@ -36,7 +30,7 @@ export class EInvoiceService {
     private readonly client: SepayEInvoiceClient,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
-  ) { }
+  ) {}
 
   // Phát hành hóa đơn cho thanh toán vừa hoàn tất; không bao giờ ném lỗi để không ảnh hưởng luồng thanh toán
   async issueForPayment(payment: PaymentDocument): Promise<void> {
@@ -45,6 +39,7 @@ export class EInvoiceService {
     } catch (error) {
       this.logger.error(
         `Lỗi không mong đợi khi phát hành hóa đơn cho đơn #${payment.orderCode}: ${error instanceof Error ? error.message : String(error)}`,
+        `Lỗi không mong đợi khi phát hành hóa đơn cho đơn #${payment.orderCode}: ${getErrorMessage(error)}`,
       );
     }
   }
@@ -54,16 +49,11 @@ export class EInvoiceService {
     if (!this.client.isEnabled()) return;
 
     if (!payment.userId) {
-      this.logger.log(
-        `[EINVOICE] Đơn #${payment.orderCode} không có cư dân nhận, bỏ qua hóa đơn`,
-      );
+      this.logger.log(`[EINVOICE] Đơn #${payment.orderCode} không có cư dân nhận, bỏ qua hóa đơn`);
       return;
     }
 
-    const user = await this.userModel
-      .findById(payment.userId)
-      .select('name email phone')
-      .lean();
+    const user = await this.userModel.findById(payment.userId).select('name email phone').lean();
     if (!user?.email) {
       this.logger.log(
         `[EINVOICE] Cư dân của đơn #${payment.orderCode} chưa có email, bỏ qua hóa đơn`,
@@ -77,16 +67,13 @@ export class EInvoiceService {
       { $set: { eInvoice: { status: 'PROCESSING', referenceCode } } },
     );
     if (claimed.modifiedCount === 0) {
-      this.logger.log(
-        `[EINVOICE] Đơn #${payment.orderCode} đã có hóa đơn hoặc đang được xử lý`,
-      );
+      this.logger.log(`[EINVOICE] Đơn #${payment.orderCode} đã có hóa đơn hoặc đang được xử lý`);
       return;
     }
 
     try {
       const trackingNumber = await this.findTrackingNumber(payment);
-      const templateCode =
-        this.configService.get<string>('EINVOICE_TEMPLATE_CODE') || '2';
+      const templateCode = this.configService.get<string>('EINVOICE_TEMPLATE_CODE') || '2';
       const payload = buildInvoicePayload({
         orderCode: payment.orderCode,
         amount: payment.amount,
@@ -97,9 +84,7 @@ export class EInvoiceService {
         buyerPhone: user.phone,
         templateCode,
         invoiceSeries: await this.client.getInvoiceSeries(templateCode),
-        providerAccountId: this.configService.get<string>(
-          'EINVOICE_PROVIDER_ACCOUNT_ID',
-        ) as string,
+        providerAccountId: this.configService.get<string>('EINVOICE_PROVIDER_ACCOUNT_ID') as string,
         issuedAt: new Date(),
       });
 
@@ -119,20 +104,14 @@ export class EInvoiceService {
       const displayNumber = `${invoice.invoice_series}${invoice.invoice_number}`;
       const pdfContent = await this.downloadPdf(invoice.pdf_url);
 
-      const sent = await this.mailService.sendInvoiceEmail(
-        user.email,
-        user.name,
-        {
-          invoiceNumber: displayNumber,
-          amount: payment.amount,
-          description: payload.items[0].item_name,
-          pdfUrl: invoice.pdf_url,
-          issuedAt: new Date(),
-          pdf: pdfContent
-            ? { filename: `${displayNumber}.pdf`, content: pdfContent }
-            : undefined,
-        },
-      );
+      const sent = await this.mailService.sendInvoiceEmail(user.email, user.name, {
+        invoiceNumber: displayNumber,
+        amount: payment.amount,
+        description: payload.items[0].item_name,
+        pdfUrl: invoice.pdf_url,
+        issuedAt: new Date(),
+        pdf: pdfContent ? { filename: `${displayNumber}.pdf`, content: pdfContent } : undefined,
+      });
       if (!sent) throw new Error('Gửi email hóa đơn không thành công');
 
       await this.paymentModel.updateOne(
@@ -148,14 +127,12 @@ export class EInvoiceService {
         `[EINVOICE] Đơn #${payment.orderCode} đã phát hành hóa đơn ${invoice.invoice_number} và gửi email`,
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       await this.paymentModel.updateOne(
         { _id: payment._id },
         { $set: { 'eInvoice.status': 'FAILED', 'eInvoice.lastError': message } },
       );
-      this.logger.error(
-        `[EINVOICE] Đơn #${payment.orderCode} thất bại: ${message}`,
-      );
+      this.logger.error(`[EINVOICE] Đơn #${payment.orderCode} thất bại: ${message}`);
     }
   }
 
@@ -167,10 +144,7 @@ export class EInvoiceService {
     try {
       return await this.client.createInvoice(payload);
     } catch (error) {
-      if (
-        error instanceof EInvoiceApiError &&
-        error.code === DOCUMENT_EXISTED_CODE
-      ) {
+      if (error instanceof EInvoiceApiError && error.code === DOCUMENT_EXISTED_CODE) {
         return referenceCode;
       }
       throw error;
@@ -220,20 +194,16 @@ export class EInvoiceService {
     } catch (error) {
       this.logger.warn(
         `[EINVOICE] Lỗi khi tải PDF: ${error instanceof Error ? error.message : String(error)}, gửi email kèm link`,
+        `[EINVOICE] Lỗi khi tải PDF: ${getErrorMessage(error)}, gửi email kèm link`,
       );
       return null;
     }
   }
 
   // Lấy mã vận đơn của kiện hàng gắn với thanh toán để ghi vào tên hàng
-  private async findTrackingNumber(
-    payment: PaymentDocument,
-  ): Promise<string | undefined> {
+  private async findTrackingNumber(payment: PaymentDocument): Promise<string | undefined> {
     if (!payment.packageId) return undefined;
-    const pkg = await this.packageModel
-      .findById(payment.packageId)
-      .select('trackingNumber')
-      .lean();
+    const pkg = await this.packageModel.findById(payment.packageId).select('trackingNumber').lean();
     return pkg?.trackingNumber;
   }
 

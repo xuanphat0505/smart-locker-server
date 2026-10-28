@@ -17,11 +17,8 @@ import { Box } from '../lockers/schemas/box.schema';
 import { BoxStatus, DoorStatus, LockerAction } from '../lockers/enums';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { PaginatedResult } from '../common/dto/pagination.dto';
-import {
-  canAccessBuilding,
-  resolveBuildingScope,
-} from '../common/utils/building-scope.util';
-import { escapeRegex } from '../common/utils/escape-regex.util';
+import { canAccessBuilding, resolveBuildingScope } from '../common/utils/building-scope.util';
+import { escapeRegex } from '../common/utils/text.util';
 import { MqttService } from '../mqtt/mqtt.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
@@ -31,20 +28,14 @@ import {
   QueryAdminPackagesDto,
   ReturnPackageDto,
 } from './dto/admin-package.dto';
-import {
-  ADMIN_PACKAGE_EXCLUDED_FIELDS,
-  toAdminPackageItem,
-} from './utils/admin-package.mapper';
-import { generateUniquePinCode } from './utils/pin-code.util';
+import { ADMIN_PACKAGE_EXCLUDED_FIELDS, toAdminPackageItem } from './utils/admin-package.mapper';
+import { generateUniquePinCode } from './utils/package-code.util';
 
 // Thời gian tối thiểu giữa hai lần cấp lại OTP cho cùng một bưu kiện
 const OTP_REISSUE_COOLDOWN_MS = 60 * 1000;
 
 // Các trạng thái mà bưu kiện còn nằm trong ngăn tủ và có thể xử lý bởi Ban Quản Lý
-const IN_LOCKER_STATUSES = [
-  PackageStatus.WAITING_FOR_PICKUP,
-  PackageStatus.OVERDUE,
-];
+const IN_LOCKER_STATUSES = [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE];
 
 @Injectable()
 export class PackagesAdminService {
@@ -104,10 +95,7 @@ export class PackagesAdminService {
   }
 
   // Lấy chi tiết một bưu kiện cho admin sau khi kiểm tra đúng phạm vi tòa nhà
-  async findOne(
-    id: string,
-    user: AuthenticatedUser,
-  ): Promise<AdminPackageItemDto> {
+  async findOne(id: string, user: AuthenticatedUser): Promise<AdminPackageItemDto> {
     this.assertValidId(id);
 
     const pkg = await this.packageModel
@@ -127,11 +115,7 @@ export class PackagesAdminService {
   }
 
   // Thu hồi bưu kiện về kho Ban Quản Lý: đổi trạng thái, giải phóng ngăn và mở cửa để lấy hàng ra
-  async returnToStorage(
-    id: string,
-    user: AuthenticatedUser,
-    dto: ReturnPackageDto,
-  ) {
+  async returnToStorage(id: string, user: AuthenticatedUser, dto: ReturnPackageDto) {
     const pkg = await this.loadManageablePackage(id, user);
 
     // Cập nhật có điều kiện trạng thái để hai yêu cầu đồng thời chỉ thành công một lần
@@ -141,9 +125,7 @@ export class PackagesAdminService {
       { returnDocument: 'after' },
     );
     if (!updated) {
-      throw new ConflictException(
-        'Bưu kiện không còn ở trạng thái có thể thu hồi',
-      );
+      throw new ConflictException('Bưu kiện không còn ở trạng thái có thể thu hồi');
     }
 
     await this.boxModel.updateOne(
@@ -161,10 +143,7 @@ export class PackagesAdminService {
     const locker = await this.lockerModel.findById(pkg.lockerId);
     let doorUnlocked = false;
     if (locker) {
-      doorUnlocked = await this.mqttService.publishDoorUnlock(
-        locker.code,
-        pkg.boxNumber,
-      );
+      doorUnlocked = await this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber);
 
       await this.activityLogsService.recordLockerAction({
         locker,
@@ -200,9 +179,7 @@ export class PackagesAdminService {
     const pkg = await this.loadManageablePackage(id, user);
 
     if (!IN_LOCKER_STATUSES.includes(pkg.status)) {
-      throw new ConflictException(
-        'Chỉ cấp lại OTP cho bưu kiện đang nằm trong ngăn tủ',
-      );
+      throw new ConflictException('Chỉ cấp lại OTP cho bưu kiện đang nằm trong ngăn tủ');
     }
 
     const now = new Date();
@@ -216,11 +193,7 @@ export class PackagesAdminService {
       );
     }
 
-    const pinCode = await generateUniquePinCode(
-      this.packageModel,
-      pkg.lockerId,
-      pkg._id,
-    );
+    const pinCode = await generateUniquePinCode(this.packageModel, pkg.lockerId, pkg._id);
 
     const updated = await this.packageModel.findOneAndUpdate(
       { _id: pkg._id, status: { $in: IN_LOCKER_STATUSES } },
@@ -278,9 +251,7 @@ export class PackagesAdminService {
   // Chỉ System Admin hoặc Building Admin của đúng tòa nhà mới được thao tác trên bưu kiện
   private assertCanManage(user: AuthenticatedUser, buildingId: unknown): void {
     if (!canAccessBuilding(user, buildingId)) {
-      throw new ForbiddenException(
-        'Bạn không có quyền thao tác trên bưu kiện của tòa nhà khác',
-      );
+      throw new ForbiddenException('Bạn không có quyền thao tác trên bưu kiện của tòa nhà khác');
     }
   }
 

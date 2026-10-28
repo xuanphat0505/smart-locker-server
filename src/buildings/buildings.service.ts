@@ -13,20 +13,14 @@ import { PackageStatus } from '../packages/enums/package.enums';
 import {
   buildOverdueFilter,
   resolveStorageLimitHours,
-} from '../packages/utils/package-expiry.util';
-import {
-  CreateBuildingDto,
-  UpdateBuildingDto,
-  PublicBuildingResponseDto,
-} from './dto';
+  PICKUPABLE_STATUSES,
+} from '../packages/utils/package-status.util';
+import { CreateBuildingDto, UpdateBuildingDto, PublicBuildingResponseDto } from './dto';
 import { BuildingStatus } from './enums/building-status.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
-import {
-  ActivityCategory,
-  ActivityStatus,
-} from '../activity-logs/enums/activity-log.enums';
-import { DEFAULT_PRICING_POLICY } from '../payments/utils/pricing-policy.util';
+import { ActivityCategory, ActivityStatus } from '../activity-logs/enums/activity-log.enums';
+import { DEFAULT_PRICING_POLICY } from '../payments/utils/storage-pricing.util';
 
 // Danh sách trường được phép trả về cho API công khai (whitelist, trường mới thêm vào schema mặc định bị ẩn)
 const PUBLIC_BUILDING_FIELDS = [
@@ -69,9 +63,7 @@ export class BuildingsService {
     }
 
     const { latitude, longitude, ...buildingData } = dto;
-    let locationData:
-      | { type: string; coordinates: [number, number] }
-      | undefined;
+    let locationData: { type: string; coordinates: [number, number] } | undefined;
 
     if (latitude !== undefined && longitude !== undefined) {
       locationData = {
@@ -165,26 +157,18 @@ export class BuildingsService {
 
   // Tìm kiếm Tòa Nhà theo mã viết tắt duy nhất
   async findByCode(code: string): Promise<Building | null> {
-    return this.buildingModel
-      .findOne({ code: code.toUpperCase().trim() })
-      .exec();
+    return this.buildingModel.findOne({ code: code.toUpperCase().trim() }).exec();
   }
 
   // Cập nhật thông tin chi tiết của một Tòa Nhà
-  async update(
-    id: string,
-    dto: UpdateBuildingDto,
-    actor?: AuthenticatedUser,
-  ): Promise<Building> {
+  async update(id: string, dto: UpdateBuildingDto, actor?: AuthenticatedUser): Promise<Building> {
     const current = await this.findById(id);
 
     if (dto.code) {
       const normalizedCode = dto.code.toUpperCase().trim();
       const existing = await this.findByCode(normalizedCode);
       if (existing && existing._id.toString() !== id) {
-        throw new ConflictException(
-          'Mã tòa nhà này đã được sử dụng bởi tòa nhà khác',
-        );
+        throw new ConflictException('Mã tòa nhà này đã được sử dụng bởi tòa nhà khác');
       }
       dto.code = normalizedCode;
     }
@@ -254,17 +238,11 @@ export class BuildingsService {
     }
 
     const updated = await this.buildingModel
-      .findByIdAndUpdate(
-        id,
-        { $set: updatePayload },
-        { new: true, runValidators: true },
-      )
+      .findByIdAndUpdate(id, { $set: updatePayload }, { new: true, runValidators: true })
       .exec();
 
     if (!updated) {
-      throw new NotFoundException(
-        'Không tìm thấy thông tin tòa nhà để cập nhật',
-      );
+      throw new NotFoundException('Không tìm thấy thông tin tòa nhà để cập nhật');
     }
 
     // Khi mốc T3 đổi, đồng bộ lại hạn lưu kho của các kiện đang chờ để trạng thái quá hạn luôn khớp biểu phí
@@ -310,9 +288,7 @@ export class BuildingsService {
   ): Promise<{ resynced: number; restored: number; markedOverdue: number }> {
     const inLocker = {
       buildingId,
-      status: {
-        $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
-      },
+      status: { $in: PICKUPABLE_STATUSES },
     };
 
     const resynced = await this.packageModel.updateMany(inLocker, [
@@ -345,9 +321,7 @@ export class BuildingsService {
   // Lấy thông tin tòa nhà của Ban Quản Lý đang đăng nhập
   async findMyBuilding(buildingId?: string): Promise<Building> {
     if (!buildingId) {
-      throw new BadRequestException(
-        'Tài khoản quản trị chưa được liên kết với Tòa nhà nào',
-      );
+      throw new BadRequestException('Tài khoản quản trị chưa được liên kết với Tòa nhà nào');
     }
     return this.findById(buildingId);
   }
@@ -359,9 +333,7 @@ export class BuildingsService {
     actor?: AuthenticatedUser,
   ): Promise<Building> {
     if (!buildingId) {
-      throw new BadRequestException(
-        'Tài khoản quản trị chưa được liên kết với Tòa nhà nào',
-      );
+      throw new BadRequestException('Tài khoản quản trị chưa được liên kết với Tòa nhà nào');
     }
 
     // Loại bỏ mã định danh và trạng thái kích hoạt vì chỉ System Admin mới được thay đổi hai trường này

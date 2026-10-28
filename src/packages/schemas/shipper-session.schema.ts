@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
-import type { ShipperNameStatus } from '../utils/shipper-name.util';
+import type { ShipperNameStatus } from '../utils/shipper-verification.util';
 
 export type ShipperSessionDocument = HydratedDocument<ShipperSession>;
 
@@ -60,8 +60,7 @@ export class ShipperSession {
   sendWindowStartedAt?: Date;
 }
 
-export const ShipperSessionSchema =
-  SchemaFactory.createForClass(ShipperSession);
+export const ShipperSessionSchema = SchemaFactory.createForClass(ShipperSession);
 
 // Tự động dọn dẹp các phiên làm việc đã quá hạn bảo lưu
 ShipperSessionSchema.index({ sessionExpiresAt: 1 }, { expireAfterSeconds: 0 });

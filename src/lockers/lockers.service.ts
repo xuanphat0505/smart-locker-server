@@ -19,10 +19,8 @@ import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { HEARTBEAT_TIMEOUT_MS } from './utils/locker-health.util';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
-import {
-  ActivityCategory,
-  ActivityStatus,
-} from '../activity-logs/enums/activity-log.enums';
+import { ActivityCategory, ActivityStatus } from '../activity-logs/enums/activity-log.enums';
+import { normalizeCode } from '../common/utils/text.util';
 
 // Trạm tủ trả về cho trang quản trị, kèm trạng thái hiệu lực và số ngăn trống/đang chứa hàng
 export interface LockerListItem {
@@ -51,8 +49,8 @@ export class LockersService {
 
   // Khởi tạo trạm tủ mới kèm việc tự động sinh toàn bộ các ngăn tủ vật lý con
   async create(dto: CreateLockerDto): Promise<Locker> {
-    const formattedCode = dto.code.trim().toUpperCase();
-    const formattedMac = dto.macAddress.trim().toUpperCase();
+    const formattedCode = normalizeCode(dto.code);
+    const formattedMac = normalizeCode(dto.macAddress);
 
     const existingCode = await this.lockerModel.findOne({
       code: formattedCode,
@@ -142,7 +140,7 @@ export class LockersService {
   // Tra cứu thông tin chi tiết một trạm tủ theo mã định danh
   async findByCode(code: string): Promise<Locker> {
     const locker = await this.lockerModel
-      .findOne({ code: code.trim().toUpperCase() })
+      .findOne({ code: normalizeCode(code) })
       .populate('buildingId', 'name code address');
 
     if (!locker) {
@@ -154,7 +152,7 @@ export class LockersService {
 
   // Kiểm tra trạng thái trực tuyến và sức khỏe kết nối thời gian thực của trạm tủ
   async getLockerHealth(code: string) {
-    const formattedCode = code.trim().toUpperCase();
+    const formattedCode = normalizeCode(code);
     const locker = await this.lockerModel.findOne({ code: formattedCode });
 
     if (!locker) {
@@ -321,7 +319,7 @@ export class LockersService {
 
     if (!locker) {
       locker = await this.lockerModel.findOne({
-        code: id.trim().toUpperCase(),
+        code: normalizeCode(id),
       });
     }
 
@@ -371,9 +369,7 @@ export class LockersService {
       buildingId: locker.buildingId,
       category: ActivityCategory.SETTINGS,
       status:
-        dto.status === LockerStatus.MAINTENANCE
-          ? ActivityStatus.WARNING
-          : ActivityStatus.INFO,
+        dto.status === LockerStatus.MAINTENANCE ? ActivityStatus.WARNING : ActivityStatus.INFO,
       title: 'Cập nhật thông tin trạm tủ',
       description: `Trạm ${locker.code} - Trường thay đổi: ${Object.keys(updateData).join(', ')}`,
       target: { type: 'LOCKER', id: String(locker._id), label: locker.code },

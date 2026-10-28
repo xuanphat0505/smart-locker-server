@@ -16,11 +16,8 @@ import { Role } from '../auth/enums/role.enum';
 import { ApprovalStatus } from '../users/enums/approval-status.enum';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { PaginatedResult } from '../common/dto/pagination.dto';
-import {
-  canAccessBuilding,
-  resolveBuildingScope,
-} from '../common/utils/building-scope.util';
-import { escapeRegex } from '../common/utils/escape-regex.util';
+import { canAccessBuilding, resolveBuildingScope } from '../common/utils/building-scope.util';
+import { escapeRegex, normalizeCode } from '../common/utils/text.util';
 import { UploadService } from '../upload/upload.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -29,10 +26,7 @@ import {
   NotificationType,
 } from '../notifications/enums/notification.enums';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
-import {
-  ActivityCategory,
-  ActivityStatus,
-} from '../activity-logs/enums/activity-log.enums';
+import { ActivityCategory, ActivityStatus } from '../activity-logs/enums/activity-log.enums';
 import {
   CreateIssueDto,
   EscalateIssueDto,
@@ -79,9 +73,7 @@ export class IssuesService {
   // Kiểm tra số lượng, loại và dung lượng ảnh đính kèm trước khi tải lên
   private assertValidAttachments(files: Express.Multer.File[]): void {
     if (files.length > ISSUE_MAX_ATTACHMENTS) {
-      throw new BadRequestException(
-        `Chỉ đính kèm tối đa ${ISSUE_MAX_ATTACHMENTS} ảnh`,
-      );
+      throw new BadRequestException(`Chỉ đính kèm tối đa ${ISSUE_MAX_ATTACHMENTS} ảnh`);
     }
     for (const file of files) {
       if (!ISSUE_ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
@@ -98,28 +90,19 @@ export class IssuesService {
     let locker: Locker | null = null;
     if (lockerCode) {
       locker = await this.lockerModel.findOne({
-        code: lockerCode.trim().toUpperCase(),
+        code: normalizeCode(lockerCode),
       });
       if (!locker) {
-        throw new NotFoundException(
-          `Trạm tủ với mã ${lockerCode} không tồn tại`,
-        );
+        throw new NotFoundException(`Trạm tủ với mã ${lockerCode} không tồn tại`);
       }
-      if (
-        user.role !== Role.SHIPPER &&
-        String(locker.buildingId) !== String(user.buildingId)
-      ) {
-        throw new ForbiddenException(
-          'Bạn chỉ có thể báo lỗi cho trạm tủ thuộc tòa nhà của mình',
-        );
+      if (user.role !== Role.SHIPPER && String(locker.buildingId) !== String(user.buildingId)) {
+        throw new ForbiddenException('Bạn chỉ có thể báo lỗi cho trạm tủ thuộc tòa nhà của mình');
       }
     }
 
     const buildingId = locker?.buildingId ?? user.buildingId;
     if (!buildingId) {
-      throw new BadRequestException(
-        'Vui lòng chọn trạm tủ liên quan đến sự cố',
-      );
+      throw new BadRequestException('Vui lòng chọn trạm tủ liên quan đến sự cố');
     }
     return { buildingId: new Types.ObjectId(String(buildingId)), locker };
   }
@@ -177,21 +160,11 @@ export class IssuesService {
   }
 
   // Tạo phiếu báo lỗi mới kèm ảnh đính kèm tùy chọn và báo cho Ban Quản Lý của tòa nhà
-  async create(
-    user: AuthenticatedUser,
-    dto: CreateIssueDto,
-    files: Express.Multer.File[] = [],
-  ) {
+  async create(user: AuthenticatedUser, dto: CreateIssueDto, files: Express.Multer.File[] = []) {
     this.assertValidAttachments(files);
-    const { buildingId, locker } = await this.resolveLocation(
-      user,
-      dto.lockerCode,
-    );
+    const { buildingId, locker } = await this.resolveLocation(user, dto.lockerCode);
 
-    const reporter = await this.userModel
-      .findById(user.userId)
-      .select('name phone email')
-      .lean();
+    const reporter = await this.userModel.findById(user.userId).select('name phone email').lean();
 
     const uploaded = await Promise.all(
       files.map((file) => this.uploadService.uploadIssueImage(file)),
@@ -229,9 +202,9 @@ export class IssuesService {
       ],
     });
 
-    const admins = (
-      await this.findActiveUserIds(Role.BUILDING_ADMIN, buildingId)
-    ).filter((id) => String(id) !== user.userId);
+    const admins = (await this.findActiveUserIds(Role.BUILDING_ADMIN, buildingId)).filter(
+      (id) => String(id) !== user.userId,
+    );
     await this.notifyUsers(
       admins,
       issue,
@@ -250,9 +223,7 @@ export class IssuesService {
       buildingId,
       category: ActivityCategory.ISSUE,
       status:
-        issue.priority === IssuePriority.URGENT
-          ? ActivityStatus.WARNING
-          : ActivityStatus.INFO,
+        issue.priority === IssuePriority.URGENT ? ActivityStatus.WARNING : ActivityStatus.INFO,
       title: 'Tạo phiếu báo lỗi',
       description: `${issue.ticketCode} - ${issue.title}`,
       target: { type: 'ISSUE', id: String(issue._id), label: issue.ticketCode },
@@ -262,10 +233,7 @@ export class IssuesService {
   }
 
   // Liệt kê phiếu theo phạm vi tòa nhà, mới nhất trước
-  async findAll(
-    user: AuthenticatedUser,
-    query: QueryIssuesDto,
-  ): Promise<PaginatedResult<Issue>> {
+  async findAll(user: AuthenticatedUser, query: QueryIssuesDto): Promise<PaginatedResult<Issue>> {
     const filter: QueryFilter<Issue> = {};
 
     const scope = resolveBuildingScope(user, query.buildingId);
@@ -312,9 +280,7 @@ export class IssuesService {
       throw new NotFoundException('Không tìm thấy phiếu báo lỗi');
     }
     if (!canAccessBuilding(user, issue.buildingId)) {
-      throw new ForbiddenException(
-        'Bạn không có quyền xem phiếu của tòa nhà khác',
-      );
+      throw new ForbiddenException('Bạn không có quyền xem phiếu của tòa nhà khác');
     }
     return issue;
   }
@@ -326,11 +292,7 @@ export class IssuesService {
   }
 
   // Chuyển trạng thái xử lý theo bảng chuyển hợp lệ và ghi vào dòng thời gian
-  async updateStatus(
-    id: string,
-    dto: UpdateIssueStatusDto,
-    user: AuthenticatedUser,
-  ) {
+  async updateStatus(id: string, dto: UpdateIssueStatusDto, user: AuthenticatedUser) {
     const issue = await this.loadManageableIssue(id, user);
     const note = dto.note?.trim() ?? '';
 
@@ -341,18 +303,13 @@ export class IssuesService {
           : `Không thể chuyển phiếu từ ${issue.status} sang ${dto.status}`,
       );
     }
-    if (
-      issue.status === IssueStatus.ESCALATED &&
-      user.role !== Role.SYSTEM_ADMIN
-    ) {
+    if (issue.status === IssueStatus.ESCALATED && user.role !== Role.SYSTEM_ADMIN) {
       throw new ForbiddenException(
         'Phiếu đã chuyển lên Super Admin, chỉ Super Admin được xử lý tiếp',
       );
     }
     if (dto.status === IssueStatus.RESOLVED && !note) {
-      throw new BadRequestException(
-        'Cần ghi chú kết quả xử lý khi hoàn tất phiếu',
-      );
+      throw new BadRequestException('Cần ghi chú kết quả xử lý khi hoàn tất phiếu');
     }
 
     const actor = await this.activityLogsService.buildActor(user);
@@ -384,9 +341,7 @@ export class IssuesService {
       { returnDocument: 'after' },
     );
     if (!updated) {
-      throw new ConflictException(
-        'Phiếu vừa được người khác cập nhật, vui lòng tải lại',
-      );
+      throw new ConflictException('Phiếu vừa được người khác cập nhật, vui lòng tải lại');
     }
 
     if (dto.status === IssueStatus.RESOLVED && issue.reporter?.userId) {
@@ -416,9 +371,7 @@ export class IssuesService {
   async escalate(id: string, dto: EscalateIssueDto, user: AuthenticatedUser) {
     const issue = await this.loadManageableIssue(id, user);
     if (!ESCALATABLE_STATUSES.includes(issue.status)) {
-      throw new ConflictException(
-        `Không thể leo thang phiếu đang ở trạng thái ${issue.status}`,
-      );
+      throw new ConflictException(`Không thể leo thang phiếu đang ở trạng thái ${issue.status}`);
     }
 
     const actor = await this.activityLogsService.buildActor(user);
@@ -443,9 +396,7 @@ export class IssuesService {
       { returnDocument: 'after' },
     );
     if (!updated) {
-      throw new ConflictException(
-        'Phiếu vừa được người khác cập nhật, vui lòng tải lại',
-      );
+      throw new ConflictException('Phiếu vừa được người khác cập nhật, vui lòng tải lại');
     }
 
     await this.notifyUsers(

@@ -22,10 +22,7 @@ export function emptyCredit(): {
 }
 
 // Tính số tiền còn thiếu của đơn, không bao giờ âm
-export function calculateRemaining(
-  amount: number,
-  receivedAmount = 0,
-): number {
+export function calculateRemaining(amount: number, receivedAmount = 0): number {
   return Math.max(0, amount - receivedAmount);
 }
 

@@ -61,5 +61,7 @@ package-lock.json
 #scripts
 scripts/
 
+/postman
+
 # config
 *-firebase-adminsdk*.json

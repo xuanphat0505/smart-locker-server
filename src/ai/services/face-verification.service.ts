@@ -14,13 +14,12 @@ import { Package } from '../../packages/schemas/package.schema';
 import { Locker } from '../../lockers/schemas/locker.schema';
 import { Box } from '../../lockers/schemas/box.schema';
 import { User } from '../../users/schemas/user.schema';
-import { PackageStatus } from '../../packages/enums/package.enums';
-import { claimPackageForPickup } from '../../packages/utils/package-claim';
 import {
-  BoxStatus,
-  DoorStatus,
-  LockerAction,
-} from '../../lockers/enums/locker.enums';
+  claimPackageForPickup,
+  PICKUPABLE_STATUSES,
+  releaseBoxAfterPickup,
+} from '../../packages/utils/package-status.util';
+import { LockerAction } from '../../lockers/enums/locker.enums';
 import { AntiSpoofingService } from './anti-spoofing.service';
 import { FaceRecognitionService } from './face-recognition.service';
 import { FaceDetectorService } from './face-detector.service';
@@ -36,6 +35,7 @@ import {
   CheckFaceMatchResult,
   FaceDetectionMetadata,
 } from '../interfaces/face-verification.interface';
+import { normalizeCode } from '../../common/utils/text.util';
 
 // Ngưỡng độ tương đồng Cosine Similarity chấp nhận trùng khớp cho vector 512 chiều ArcFace sau khi crop khuôn mặt
 const FACE_MATCH_THRESHOLD = 0.48;
@@ -59,7 +59,7 @@ export class FaceVerificationService {
     private readonly mqttService: MqttService,
     private readonly paymentsService: PaymentsService,
     private readonly activityLogsService: ActivityLogsService,
-  ) { }
+  ) {}
 
   // Tính toán vector trung bình và chuẩn hóa chuẩn L2 từ danh sách các vector đặc trưng khuôn mặt đa góc
   private calculateMeanNormalizedEmbedding(embeddings: number[][]): number[] {
@@ -95,32 +95,27 @@ export class FaceVerificationService {
     identifier?: string,
   ): Promise<ProcessEnrollmentResult> {
     if (!imageBuffers || imageBuffers.length === 0) {
-      throw new BadRequestException(
-        'Vui lòng cung cấp ít nhất một ảnh chụp khuôn mặt hợp lệ',
-      );
+      throw new BadRequestException('Vui lòng cung cấp ít nhất một ảnh chụp khuôn mặt hợp lệ');
     }
 
     const primaryBuffer = imageBuffers[0];
-    const detectedFace =
-      await this.faceDetectorService.detectFace(primaryBuffer);
+    const detectedFace = await this.faceDetectorService.detectFace(primaryBuffer);
     if (!detectedFace) {
       throw new BadRequestException(
         'Không tìm thấy khuôn mặt rõ nét trong ảnh. Vui lòng chụp lại ảnh khuôn mặt chính diện',
       );
     }
 
-    const livenessResult = await this.antiSpoofingService.checkLiveness(
-      primaryBuffer,
-      { faceBox: detectedFace },
-    );
+    const livenessResult = await this.antiSpoofingService.checkLiveness(primaryBuffer, {
+      faceBox: detectedFace,
+    });
     if (!livenessResult.isReal) {
       throw new BadRequestException(
         `Ảnh khuôn mặt không đạt chuẩn chân thực (Điểm thật: ${(livenessResult.livenessScore * 100).toFixed(1)}%). Vui lòng chụp lại ảnh người thật rõ nét`,
       );
     }
 
-    const finalEmbedding =
-      await this.faceRecognitionService.extractEmbedding(primaryBuffer);
+    const finalEmbedding = await this.faceRecognitionService.extractEmbedding(primaryBuffer);
 
     return {
       embedding: finalEmbedding,
@@ -130,10 +125,7 @@ export class FaceVerificationService {
   }
 
   // Đăng ký hoặc cập nhật dữ liệu sinh trắc học khuôn mặt chính diện cho cư dân
-  async enrollFace(
-    userId: string,
-    imageBuffers: Buffer | Buffer[],
-  ): Promise<EnrollFaceResult> {
+  async enrollFace(userId: string, imageBuffers: Buffer | Buffer[]): Promise<EnrollFaceResult> {
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('Không tìm thấy thông tin người dùng');
@@ -150,9 +142,7 @@ export class FaceVerificationService {
     };
 
     await user.save();
-    this.logger.log(
-      `Cư dân ${user.name} (${user.phone}) đã đăng ký Face ID thành công`,
-    );
+    this.logger.log(`Cư dân ${user.name} (${user.phone}) đã đăng ký Face ID thành công`);
 
     return {
       success: true,
@@ -210,10 +200,9 @@ export class FaceVerificationService {
       );
     }
 
-    const livenessResult = await this.antiSpoofingService.checkLiveness(
-      imageBuffer,
-      { faceBox: detectedFace },
-    );
+    const livenessResult = await this.antiSpoofingService.checkLiveness(imageBuffer, {
+      faceBox: detectedFace,
+    });
 
     this.logger.log(
       `[ANTI_SPOOFING] Trạm ${lockerCode} -> Điểm Liveness: ${(livenessResult.livenessScore * 100).toFixed(1)}% | Spoof: ${(livenessResult.spoofScore * 100).toFixed(1)}% | Kết luận: ${livenessResult.verdict} (Inference: ${livenessResult.inferenceTimeMs}ms)`,
@@ -223,43 +212,33 @@ export class FaceVerificationService {
       this.logger.warn(
         `Tu choi xac thuc tai tram ${lockerCode}: Phat hien mat gia hoac khong ro net (Liveness: ${(livenessResult.livenessScore * 100).toFixed(1)}%)`,
       );
-      throw new ForbiddenException(
-        'Phat hien khuon mat khong hop le hoac gia mao man hinh/anh in',
-      );
+      throw new ForbiddenException('Phat hien khuon mat khong hop le hoac gia mao man hinh/anh in');
     }
 
     // Trich xuat vector dac trung khuon mat tu anh camera
-    const inputEmbedding =
-      await this.faceRecognitionService.extractEmbedding(imageBuffer);
+    const inputEmbedding = await this.faceRecognitionService.extractEmbedding(imageBuffer);
 
     // Tim kiem tram tu theo ma code
     const locker = await this.lockerModel.findOne({
-      code: lockerCode.trim().toUpperCase(),
+      code: normalizeCode(lockerCode),
     });
     if (!locker) {
-      throw new NotFoundException(
-        `Tram tu voi ma ${lockerCode} khong ton tai trong he thong`,
-      );
+      throw new NotFoundException(`Tram tu voi ma ${lockerCode} khong ton tai trong he thong`);
     }
 
     // Buoc 4: Lay danh sach cac buu kien dang cho cu dan den lay tai tram tu nay (bao gom ca buu kien qua han)
     const activePackages = await this.packageModel
       .find({
         lockerId: locker._id,
-        status: {
-          $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
-        },
+        status: { $in: PICKUPABLE_STATUSES },
       })
       .populate({
         path: 'residentId',
-        select:
-          '+faceAuth.embedding faceAuth.enabled name phone apartment avatar',
+        select: '+faceAuth.embedding faceAuth.enabled name phone apartment avatar',
       });
 
     if (activePackages.length === 0) {
-      throw new NotFoundException(
-        'Hien khong co buu kien nao dang cho nhan tai tram tu nay',
-      );
+      throw new NotFoundException('Hien khong co buu kien nao dang cho nhan tai tram tu nay');
     }
 
     // Buoc 5: Thuat toan so khop pham vi cuc bo 1:N giua anh camera va cu dan co don hang
@@ -327,18 +306,14 @@ export class FaceVerificationService {
         : `Vui lòng quét mã QR trên màn hình Kiosk để thanh toán phí nhận hàng Ngăn #${matchedPkg.boxNumber}.`;
 
       // Phat ban tin MQTT yeu cau tram tu hien thi ma QR thanh toan tren man hinh LCD
-      await this.mqttService.publishPaymentRequired(
-        locker.code,
-        matchedPkg.boxNumber,
-        {
-          orderCode: intent.orderCode,
-          feeAmount: intent.amount,
-          qrPayload: intent.qrPayload,
-          paymentUrl: intent.paymentUrl,
-          residentName: matchedResident.name || matchedPkg.receiverName,
-          message: paymentMessage,
-        },
-      );
+      await this.mqttService.publishPaymentRequired(locker.code, matchedPkg.boxNumber, {
+        orderCode: intent.orderCode,
+        feeAmount: intent.amount,
+        qrPayload: intent.qrPayload,
+        paymentUrl: intent.paymentUrl,
+        residentName: matchedResident.name || matchedPkg.receiverName,
+        message: paymentMessage,
+      });
 
       this.logger.log(
         `[FACE_PAYMENT_REQUIRED] Tram ${locker.code} - Cu dan ${matchedResident.name} - Ngan #${matchedPkg.boxNumber} can nop phi: ${intent.amount} VND (Order #${intent.orderCode})`,
@@ -366,34 +341,20 @@ export class FaceVerificationService {
     }
 
     // Chiem quyen nhan kien bang mot lenh cap nhat duy nhat de hai yeu cau dong thoi khong cung mo tu
-    const claimedPkg = await claimPackageForPickup(
-      this.packageModel,
-      matchedPkg._id,
-    );
+    const claimedPkg = await claimPackageForPickup(this.packageModel, matchedPkg._id);
     if (!claimedPkg) {
-      throw new BadRequestException(
-        'Buu kien da duoc nhan truoc do boi mot yeu cau khac',
-      );
+      throw new BadRequestException('Buu kien da duoc nhan truoc do boi mot yeu cau khac');
     }
 
     // Phat lenh mo khoa Solenoid toi phan cung ESP32 qua MQTT ngay sau khi chiem quyen nhan kien
-    this.mqttService
-      .publishDoorUnlock(locker.code, matchedPkg.boxNumber)
-      .catch((err) => {
-        this.logger.error(
-          `Loi khi phat lenh MQTT mo ngan ${matchedPkg.boxNumber} tai tram ${locker.code}: ${err}`,
-        );
-      });
+    this.mqttService.publishDoorUnlock(locker.code, matchedPkg.boxNumber).catch((err) => {
+      this.logger.error(
+        `Loi khi phat lenh MQTT mo ngan ${matchedPkg.boxNumber} tai tram ${locker.code}: ${err}`,
+      );
+    });
 
     // Buoc 6: Giai phong ngan tu ve trang thai kha dung
-    const box = await this.boxModel.findById(matchedPkg.boxId);
-    if (box) {
-      box.status = BoxStatus.AVAILABLE;
-      box.currentPackageId = undefined;
-      box.doorStatus = DoorStatus.OPEN;
-      box.hasItem = false;
-      await box.save();
-    }
+    await releaseBoxAfterPickup(this.boxModel, matchedPkg.boxId);
 
     // Ghi nhat ky su kien mo tu bang Face ID
     await this.activityLogsService.recordLockerAction({
@@ -446,27 +407,26 @@ export class FaceVerificationService {
     const detectedFace = await this.faceDetectorService.detectFace(imageBuffer);
     const faceDetectionInfo: FaceDetectionMetadata = detectedFace
       ? {
-        detected: true,
-        confidence: Math.round(detectedFace.score * 1000) / 1000,
-        box: {
-          x1: Math.round(detectedFace.x1 * 1000) / 1000,
-          y1: Math.round(detectedFace.y1 * 1000) / 1000,
-          x2: Math.round(detectedFace.x2 * 1000) / 1000,
-          y2: Math.round(detectedFace.y2 * 1000) / 1000,
-        },
-        landmarks: detectedFace.landmarks,
-        cropApplied: true,
-      }
+          detected: true,
+          confidence: Math.round(detectedFace.score * 1000) / 1000,
+          box: {
+            x1: Math.round(detectedFace.x1 * 1000) / 1000,
+            y1: Math.round(detectedFace.y1 * 1000) / 1000,
+            x2: Math.round(detectedFace.x2 * 1000) / 1000,
+            y2: Math.round(detectedFace.y2 * 1000) / 1000,
+          },
+          landmarks: detectedFace.landmarks,
+          cropApplied: true,
+        }
       : {
-        detected: false,
-        cropApplied: false,
-      };
+          detected: false,
+          cropApplied: false,
+        };
 
     let croppedFaceBase64: string | undefined;
     if (options?.includeCroppedFace && detectedFace) {
       try {
-        const croppedBuffer =
-          await this.faceDetectorService.cropFace(imageBuffer);
+        const croppedBuffer = await this.faceDetectorService.cropFace(imageBuffer);
         croppedFaceBase64 = `data:image/jpeg;base64,${croppedBuffer.toString('base64')}`;
       } catch (err: unknown) {
         this.logger.warn(`Không thể tạo chuỗi Base64 ảnh crop: ${String(err)}`);
@@ -474,10 +434,9 @@ export class FaceVerificationService {
     }
 
     // Bước 2: Kiểm tra tính chân thực khuôn mặt bằng mô hình Anti-Spoofing
-    const livenessResult = await this.antiSpoofingService.checkLiveness(
-      imageBuffer,
-      { faceBox: detectedFace },
-    );
+    const livenessResult = await this.antiSpoofingService.checkLiveness(imageBuffer, {
+      faceBox: detectedFace,
+    });
 
     if (!livenessResult.isReal) {
       return {
@@ -496,32 +455,26 @@ export class FaceVerificationService {
     }
 
     // Bước 3: Trích xuất vector đặc trưng 512 chiều từ ảnh khuôn mặt (đã tự động crop)
-    const inputEmbedding =
-      await this.faceRecognitionService.extractEmbedding(imageBuffer);
+    const inputEmbedding = await this.faceRecognitionService.extractEmbedding(imageBuffer);
 
     // Bước 4: Tìm kiếm trạm tủ theo mã code
     const locker = await this.lockerModel.findOne({
-      code: lockerCode.trim().toUpperCase(),
+      code: normalizeCode(lockerCode),
     });
 
     if (!locker) {
-      throw new NotFoundException(
-        `Trạm tủ với mã ${lockerCode} không tồn tại trong hệ thống`,
-      );
+      throw new NotFoundException(`Trạm tủ với mã ${lockerCode} không tồn tại trong hệ thống`);
     }
 
     // Bước 5: Lấy danh sách các bưu kiện đang chờ nhận tại trạm tủ này (bao gồm cả bưu kiện quá hạn)
     const activePackages = await this.packageModel
       .find({
         lockerId: locker._id,
-        status: {
-          $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
-        },
+        status: { $in: PICKUPABLE_STATUSES },
       })
       .populate({
         path: 'residentId',
-        select:
-          '+faceAuth.embedding faceAuth.enabled name phone apartment avatar',
+        select: '+faceAuth.embedding faceAuth.enabled name phone apartment avatar',
       });
 
     if (activePackages.length === 0) {

@@ -2,14 +2,8 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { NotificationsGateway } from './notifications.gateway';
-import {
-  ExpoPushPayload,
-  PushNotificationsService,
-} from './push-notifications.service';
-import {
-  Notification,
-  NotificationDocument,
-} from './schemas/notification.schema';
+import { ExpoPushPayload, PushNotificationsService } from './push-notifications.service';
+import { Notification, NotificationDocument } from './schemas/notification.schema';
 import { User } from '../users/schemas/user.schema';
 import { Role } from '../auth/enums/role.enum';
 import {
@@ -18,6 +12,7 @@ import {
   NotificationType,
 } from './enums/notification.enums';
 import { QueryNotificationDto, BroadcastNotificationDto } from './dto';
+import { getErrorMessage } from '../common/utils/text.util';
 
 // Dịch vụ quản lý thông báo, lưu trữ lịch sử vào database và phát sóng qua WebSocket
 @Injectable()
@@ -48,9 +43,7 @@ export class NotificationsService {
     const doc = new this.notificationModel({
       ...payload,
       recipientId: new Types.ObjectId(payload.recipientId),
-      buildingId: payload.buildingId
-        ? new Types.ObjectId(payload.buildingId)
-        : undefined,
+      buildingId: payload.buildingId ? new Types.ObjectId(payload.buildingId) : undefined,
       priority: payload.priority || NotificationPriority.NORMAL,
       isRead: false,
       readAt: null,
@@ -72,12 +65,7 @@ export class NotificationsService {
     if (isRead !== undefined) filter.isRead = isRead;
 
     const [data, total, unreadCount] = await Promise.all([
-      this.notificationModel
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
+      this.notificationModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
       this.notificationModel.countDocuments(filter).exec(),
       this.notificationModel
         .countDocuments({
@@ -113,10 +101,7 @@ export class NotificationsService {
   }
 
   // Đánh dấu một thông báo cụ thể là đã đọc
-  async markAsRead(
-    userId: string,
-    notificationId: string,
-  ): Promise<NotificationDocument> {
+  async markAsRead(userId: string, notificationId: string): Promise<NotificationDocument> {
     const notification = await this.notificationModel.findOneAndUpdate(
       {
         _id: new Types.ObjectId(notificationId),
@@ -129,9 +114,7 @@ export class NotificationsService {
     );
 
     if (!notification) {
-      throw new NotFoundException(
-        'Không tìm thấy thông báo hoặc bạn không có quyền truy cập',
-      );
+      throw new NotFoundException('Không tìm thấy thông báo hoặc bạn không có quyền truy cập');
     }
 
     return notification;
@@ -153,19 +136,14 @@ export class NotificationsService {
   }
 
   // Xóa một thông báo khỏi hộp thư cá nhân
-  async deleteNotification(
-    userId: string,
-    notificationId: string,
-  ): Promise<{ message: string }> {
+  async deleteNotification(userId: string, notificationId: string): Promise<{ message: string }> {
     const result = await this.notificationModel.findOneAndDelete({
       _id: new Types.ObjectId(notificationId),
       recipientId: new Types.ObjectId(userId),
     });
 
     if (!result) {
-      throw new NotFoundException(
-        'Không tìm thấy thông báo hoặc bạn không có quyền xóa',
-      );
+      throw new NotFoundException('Không tìm thấy thông báo hoặc bạn không có quyền xóa');
     }
 
     return { message: 'Đã xóa thông báo thành công' };
@@ -308,9 +286,7 @@ export class NotificationsService {
       //  Mở rộng trong tương lai: Expo Push Notification / Telegram Bot
       // TODO: Sẽ thêm sau
     } catch (error) {
-      this.logger.error(
-        `Lỗi khi điều phối thông báo cư dân mới: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi điều phối thông báo cư dân mới: ${getErrorMessage(error)}`);
     }
   }
 
@@ -327,23 +303,16 @@ export class NotificationsService {
     try {
       this.notificationsGateway.notifyDepositResult(lockerCode, payload);
     } catch (error) {
-      this.logger.error(
-        `Lỗi khi phát kết quả lượt gửi hàng: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi phát kết quả lượt gửi hàng: ${getErrorMessage(error)}`);
     }
   }
 
   // Báo cư dân tài khoản vừa bị tạm khóa qua WebSocket, hộp thư và thông báo đẩy; lỗi gửi không được làm hỏng thao tác khóa
-  async notifyAccountSuspended(
-    residentId: string,
-    buildingId?: string,
-  ): Promise<void> {
+  async notifyAccountSuspended(residentId: string, buildingId?: string): Promise<void> {
     try {
       this.notificationsGateway.notifyAccountSuspended(residentId);
     } catch (error) {
-      this.logger.error(
-        `Lỗi khi phát sự kiện tạm khóa tài khoản: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi phát sự kiện tạm khóa tài khoản: ${getErrorMessage(error)}`);
     }
 
     try {
@@ -373,7 +342,7 @@ export class NotificationsService {
       );
     } catch (error) {
       this.logger.error(
-        `Lỗi khi điều phối thông báo tạm khóa tài khoản: ${error instanceof Error ? error.message : String(error)}`,
+        `Lỗi khi điều phối thông báo tạm khóa tài khoản: ${getErrorMessage(error)}`,
       );
     }
   }
@@ -396,19 +365,13 @@ export class NotificationsService {
       await this.createNotification({
         recipientId: residentId,
         buildingId,
-        title: isApproved
-          ? 'Hồ sơ cư dân đã được phê duyệt'
-          : 'Hồ sơ cư dân đã bị từ chối',
+        title: isApproved ? 'Hồ sơ cư dân đã được phê duyệt' : 'Hồ sơ cư dân đã bị từ chối',
         message: isApproved
           ? `Tài khoản cư dân tại căn hộ ${result.apartment || ''} đã được kích hoạt thành công.`
           : `Yêu cầu xác nhận cư dân bị từ chối. Lý do: ${result.reason || 'Thông tin không khớp với dữ liệu tòa nhà'}.`,
         category: NotificationCategory.ACCOUNT,
-        type: isApproved
-          ? NotificationType.RESIDENT_APPROVED
-          : NotificationType.RESIDENT_REJECTED,
-        priority: isApproved
-          ? NotificationPriority.NORMAL
-          : NotificationPriority.HIGH,
+        type: isApproved ? NotificationType.RESIDENT_APPROVED : NotificationType.RESIDENT_REJECTED,
+        priority: isApproved ? NotificationPriority.NORMAL : NotificationPriority.HIGH,
         actionUrl: isApproved ? '/(tabs)' : '/auth/register/resident',
         metadata: {
           status: result.status,
@@ -418,11 +381,7 @@ export class NotificationsService {
       });
 
       // Kênh WebSocket Socket.IO
-      this.notificationsGateway.notifyResidentApprovalResult(
-        buildingId,
-        residentId,
-        result,
-      );
+      this.notificationsGateway.notifyResidentApprovalResult(buildingId, residentId, result);
 
       // Kênh thông báo đẩy trực tiếp tới thiết bị di động
       await this.pushToUser(
@@ -448,9 +407,7 @@ export class NotificationsService {
         result.devicePushToken,
       );
     } catch (error) {
-      this.logger.error(
-        `Lỗi khi điều phối thông báo kết quả duyệt: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi điều phối thông báo kết quả duyệt: ${getErrorMessage(error)}`);
     }
   }
 
@@ -491,11 +448,7 @@ export class NotificationsService {
       });
 
       // Kênh WebSocket Socket.IO
-      this.notificationsGateway.notifyPackageDropOff(
-        residentId,
-        buildingId,
-        packageInfo,
-      );
+      this.notificationsGateway.notifyPackageDropOff(residentId, buildingId, packageInfo);
 
       // Kênh thông báo đẩy trực tiếp tới thiết bị di động
       await this.pushToUser(
@@ -517,9 +470,7 @@ export class NotificationsService {
         'bưu kiện',
       );
     } catch (error) {
-      this.logger.error(
-        `Lỗi khi điều phối thông báo bưu kiện: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi điều phối thông báo bưu kiện: ${getErrorMessage(error)}`);
     }
   }
 
@@ -573,9 +524,7 @@ export class NotificationsService {
         'cấp lại OTP',
       );
     } catch (error) {
-      this.logger.error(
-        `Lỗi khi điều phối thông báo cấp lại OTP: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi điều phối thông báo cấp lại OTP: ${getErrorMessage(error)}`);
     }
   }
 
@@ -632,7 +581,7 @@ export class NotificationsService {
       );
     } catch (error) {
       this.logger.error(
-        `Lỗi khi điều phối thông báo bưu kiện sắp hết hạn: ${error instanceof Error ? error.message : String(error)}`,
+        `Lỗi khi điều phối thông báo bưu kiện sắp hết hạn: ${getErrorMessage(error)}`,
       );
     }
   }
@@ -687,9 +636,7 @@ export class NotificationsService {
         'bưu kiện quá hạn',
       );
     } catch (error) {
-      this.logger.error(
-        `Lỗi khi điều phối thông báo bưu kiện quá hạn: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi điều phối thông báo bưu kiện quá hạn: ${getErrorMessage(error)}`);
     }
   }
 
@@ -736,7 +683,7 @@ export class NotificationsService {
       );
     } catch (error) {
       this.logger.error(
-        `Lỗi khi điều phối thông báo bưu kiện quá hạn cho Ban Quản Lý: ${error instanceof Error ? error.message : String(error)}`,
+        `Lỗi khi điều phối thông báo bưu kiện quá hạn cho Ban Quản Lý: ${getErrorMessage(error)}`,
       );
     }
   }
@@ -748,19 +695,13 @@ export class NotificationsService {
     packageInfo: { id: string; trackingNumber: string; boxNumber: number },
   ): void {
     try {
-      this.notificationsGateway.notifyPackageStorageAlert(
-        residentId,
-        eventName,
-        {
-          packageId: packageInfo.id,
-          trackingNumber: packageInfo.trackingNumber,
-          boxNumber: packageInfo.boxNumber,
-        },
-      );
+      this.notificationsGateway.notifyPackageStorageAlert(residentId, eventName, {
+        packageId: packageInfo.id,
+        trackingNumber: packageInfo.trackingNumber,
+        boxNumber: packageInfo.boxNumber,
+      });
     } catch (error) {
-      this.logger.error(
-        `Lỗi khi phát sự kiện ${eventName}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi phát sự kiện ${eventName}: ${getErrorMessage(error)}`);
     }
   }
 
@@ -773,10 +714,7 @@ export class NotificationsService {
   ): Promise<void> {
     let pushToken = knownToken;
     if (!pushToken) {
-      const user = await this.userModel
-        .findById(userId)
-        .select('devicePushToken')
-        .lean();
+      const user = await this.userModel.findById(userId).select('devicePushToken').lean();
       pushToken = user?.devicePushToken;
     }
     if (!pushToken) return;
