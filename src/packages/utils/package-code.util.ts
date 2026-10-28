@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomInt } from 'crypto';
 import { Model, Types } from 'mongoose';
 import { Package } from '../schemas';
 import { safeEqualHex, sha256Hex } from '../../common/utils/security.util';
@@ -15,7 +15,7 @@ export async function generateUniquePinCode(
   excludePackageId?: Types.ObjectId,
 ): Promise<string> {
   for (let attempt = 0; attempt < MAX_PIN_ATTEMPTS; attempt++) {
-    const pinCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const pinCode = randomInt(100000, 1000000).toString();
     const existing = await packageModel.exists({
       lockerId,
       pinCode,
@@ -26,9 +26,7 @@ export async function generateUniquePinCode(
     if (!existing) return pinCode;
   }
 
-  throw new BadRequestException(
-    'Không thể sinh mã OTP duy nhất cho trạm tủ này, vui lòng thử lại',
-  );
+  throw new BadRequestException('Không thể sinh mã OTP duy nhất cho trạm tủ này, vui lòng thử lại');
 }
 
 // Chuẩn hóa mã vận đơn về dạng chữ hoa không khoảng trắng hai đầu
@@ -78,11 +76,7 @@ export function verifyDepositToken(
 }
 
 // Thẩm định tính hợp lệ của mã QR Token động sinh từ màn hình LCD trạm tủ, chấp nhận cửa sổ phút hiện tại và phút liền trước
-export function verifyDynamicQrToken(
-  apiKey: string,
-  stationCode: string,
-  token: string,
-): boolean {
+export function verifyDynamicQrToken(apiKey: string, stationCode: string, token: string): boolean {
   if (!apiKey || !stationCode || !token) {
     return false;
   }

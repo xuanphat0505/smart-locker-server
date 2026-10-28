@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import * as https from 'https';
 import * as querystring from 'querystring';
 import { SePayPgClient } from 'sepay-pg-node';
@@ -174,7 +175,7 @@ export function generateSepayQrUrl(params: {
 // Sinh mã số giao dịch nguyên dương duy nhất có độ dài an toàn cho SePay
 export function generateOrderCode(): number {
   const timeSlice = Date.now().toString().slice(-6);
-  const randomPart = Math.floor(1000 + Math.random() * 9000).toString();
+  const randomPart = randomInt(1000, 10000).toString();
   return parseInt(`${timeSlice}${randomPart}`, 10);
 }
 
