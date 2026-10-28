@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
@@ -24,10 +19,8 @@ import {
   decideOnExpiry,
   decideOnSensor,
 } from './utils/deposit-decision.util';
-import {
-  computeExpiredAt,
-  resolveStorageLimitHours,
-} from './utils/package-expiry.util';
+import { computeExpiredAt, resolveStorageLimitHours } from './utils/package-status.util';
+import { normalizeCode, getErrorMessage } from '../common/utils/text.util';
 
 // Theo dõi cảm biến của các ngăn đang chờ đặt hàng và tự xác nhận hoặc hủy lượt gửi theo trạng thái cảm biến
 @Injectable()
@@ -67,16 +60,14 @@ export class DepositWatcherService implements OnModuleInit, OnModuleDestroy {
 
   // Khóa hàng đợi theo trạm và ngăn
   private queueKey(lockerCode: string, boxNumber: number): string {
-    return `${lockerCode.trim().toUpperCase()}:${boxNumber}`;
+    return `${normalizeCode(lockerCode)}:${boxNumber}`;
   }
 
   // Xếp một tác vụ vào hàng đợi của ngăn, lỗi trong tác vụ chỉ được ghi log để không làm đứt hàng đợi
   private enqueue(key: string, task: () => Promise<void>): void {
     const previous = this.queues.get(key) ?? Promise.resolve();
     const next = previous.then(task).catch((error: unknown) => {
-      this.logger.error(
-        `Lỗi khi xử lý lượt gửi hàng của ngăn ${key}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi xử lý lượt gửi hàng của ngăn ${key}: ${getErrorMessage(error)}`);
     });
     this.queues.set(key, next);
     void next.then(() => {
@@ -95,10 +86,7 @@ export class DepositWatcherService implements OnModuleInit, OnModuleDestroy {
 
   // Lưu ảnh chụp cảm biến của ngăn rồi đánh giá lượt gửi đang chờ đặt hàng (nếu có)
   private async handleSensorEvent(event: SensorEvent): Promise<void> {
-    const locker = await this.lockerModel
-      .findOne({ code: event.lockerCode })
-      .select('_id')
-      .lean();
+    const locker = await this.lockerModel.findOne({ code: event.lockerCode }).select('_id').lean();
     if (!locker) return;
 
     const at = new Date(event.at);
@@ -106,10 +94,7 @@ export class DepositWatcherService implements OnModuleInit, OnModuleDestroy {
       {
         lockerId: locker._id,
         boxNumber: event.boxNumber,
-        $or: [
-          { 'lastSensor.at': { $exists: false } },
-          { 'lastSensor.at': { $lte: at } },
-        ],
+        $or: [{ 'lastSensor.at': { $exists: false } }, { 'lastSensor.at': { $lte: at } }],
       },
       {
         $set: {
@@ -178,10 +163,7 @@ export class DepositWatcherService implements OnModuleInit, OnModuleDestroy {
         $set: {
           status: PackageStatus.WAITING_FOR_PICKUP,
           droppedOffAt: now,
-          expiredAt: computeExpiredAt(
-            now,
-            resolveStorageLimitHours(building?.pricingPolicy),
-          ),
+          expiredAt: computeExpiredAt(now, resolveStorageLimitHours(building?.pricingPolicy)),
           depositConfirmedAt: now,
         },
       },
@@ -305,10 +287,7 @@ export class DepositWatcherService implements OnModuleInit, OnModuleDestroy {
       .lean();
 
     for (const item of expired) {
-      const locker = await this.lockerModel
-        .findById(item.lockerId)
-        .select('code')
-        .lean();
+      const locker = await this.lockerModel.findById(item.lockerId).select('code').lean();
       if (!locker) continue;
 
       this.enqueue(this.queueKey(locker.code, item.boxNumber), () =>
@@ -331,10 +310,7 @@ export class DepositWatcherService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const box = await this.boxModel
-      .findById(pkg.boxId)
-      .select('lastSensor')
-      .lean();
+    const box = await this.boxModel.findById(pkg.boxId).select('lastSensor').lean();
     const lastSnapshot: SensorSnapshot | null = box?.lastSensor
       ? {
           doorStatus: box.lastSensor.doorStatus,

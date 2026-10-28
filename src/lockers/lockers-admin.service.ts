@@ -24,6 +24,7 @@ import { canAccessBuilding } from '../common/utils/building-scope.util';
 import { MqttService } from '../mqtt/mqtt.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { ActivityCategory, ActivityStatus } from '../activity-logs/enums/activity-log.enums';
+import { normalizeCode } from '../common/utils/text.util';
 
 // Khoảng chặn giữa hai lần mở khóa từ xa trên cùng một ngăn để tránh bấm lặp
 const UNLOCK_COOLDOWN_MS = 10 * 1000;
@@ -57,7 +58,7 @@ export class LockersAdminService {
   // Nạp trạm tủ theo mã và chỉ cho phép System Admin hoặc Building Admin của đúng tòa nhà thao tác
   private async loadManageableLocker(code: string, user: AuthenticatedUser) {
     const locker = await this.lockerModel.findOne({
-      code: code.trim().toUpperCase(),
+      code: normalizeCode(code),
     });
     if (!locker) {
       throw new NotFoundException(`Trạm tủ với mã ${code} không tồn tại`);

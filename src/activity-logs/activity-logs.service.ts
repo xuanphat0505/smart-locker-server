@@ -8,7 +8,7 @@ import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import type { ActivityActorRole } from './enums/activity-log.enums';
 import { PaginatedResult } from '../common/dto/pagination.dto';
 import { resolveBuildingScope, toObjectIdOrUndefined } from '../common/utils/building-scope.util';
-import { escapeRegex } from '../common/utils/escape-regex.util';
+import { escapeRegex } from '../common/utils/text.util';
 import { buildLockerActivityEntry } from './utils/build-locker-activity';
 import { ActivityLogStatsQueryDto, QueryActivityLogDto } from './dto/query-activity-log.dto';
 import {
@@ -32,7 +32,7 @@ export class ActivityLogsService {
     @InjectModel(LockerLog.name)
     private readonly lockerLogModel: Model<LockerLog>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
-  ) { }
+  ) {}
 
   // Ghi một bản ghi nhật ký thao tác; lỗi chỉ được cảnh báo và không bao giờ làm hỏng nghiệp vụ gọi nó
   async log(input: CreateActivityLogInput): Promise<void> {
@@ -91,10 +91,7 @@ export class ActivityLogsService {
   ): Promise<ActivityActorInput> {
     if (!userId) return { name: 'Hệ thống', role: 'SYSTEM' };
 
-    const account = await this.userModel
-      .findById(userId)
-      .select('name phone')
-      .lean();
+    const account = await this.userModel.findById(userId).select('name phone').lean();
     return { userId, name: account?.name ?? 'Không rõ', phone: account?.phone, role };
   }
 

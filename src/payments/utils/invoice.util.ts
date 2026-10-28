@@ -1,5 +1,5 @@
 import { PaymentStatus, PaymentType } from '../enums/payment.enums';
-import { PricingTierKey } from './pricing-policy.util';
+import { PricingTierKey } from './storage-pricing.util';
 
 export type InvoiceStatus = 'UNPAID' | 'PARTIAL' | 'PAID';
 
@@ -93,9 +93,7 @@ function resolveInvoiceStatus(
 }
 
 // Dựng các dòng thanh toán của hóa đơn gồm phiên đã PAID và khoản đã nhận ở phiên chờ
-function buildInvoicePayments(
-  payments: InvoicePaymentInput[],
-): InvoicePayment[] {
+function buildInvoicePayments(payments: InvoicePaymentInput[]): InvoicePayment[] {
   const lines: InvoicePayment[] = [];
 
   payments.forEach((p) => {
@@ -118,23 +116,14 @@ function buildInvoicePayments(
     }
   });
 
-  return lines.sort(
-    (a, b) => (a.paidAt?.getTime() ?? 0) - (b.paidAt?.getTime() ?? 0),
-  );
+  return lines.sort((a, b) => (a.paidAt?.getTime() ?? 0) - (b.paidAt?.getTime() ?? 0));
 }
 
 // Chọn phiên chờ mới nhất còn thiếu tiền để hướng dẫn cư dân chuyển nốt
-function pickPendingPayment(
-  payments: InvoicePaymentInput[],
-): PendingPaymentInfo | null {
+function pickPendingPayment(payments: InvoicePaymentInput[]): PendingPaymentInfo | null {
   const candidate = payments
-    .filter(
-      (p) =>
-        p.status === PaymentStatus.PENDING && p.amount - p.receivedAmount > 0,
-    )
-    .sort(
-      (a, b) => (b.expiresAt?.getTime() ?? 0) - (a.expiresAt?.getTime() ?? 0),
-    )[0];
+    .filter((p) => p.status === PaymentStatus.PENDING && p.amount - p.receivedAmount > 0)
+    .sort((a, b) => (b.expiresAt?.getTime() ?? 0) - (a.expiresAt?.getTime() ?? 0))[0];
 
   if (!candidate) return null;
 
@@ -147,20 +136,13 @@ function pickPendingPayment(
 }
 
 // Dựng hóa đơn của một kiện hàng, trả null nếu kiện không có phí và chưa có khoản tiền nào
-function buildInvoice(
-  pkg: InvoicePackageInput,
-  payments: InvoicePaymentInput[],
-): Invoice | null {
+function buildInvoice(pkg: InvoicePackageInput, payments: InvoicePaymentInput[]): Invoice | null {
   const paidList = payments.filter((p) => p.status === PaymentStatus.PAID);
-  const pendingList = payments.filter(
-    (p) => p.status === PaymentStatus.PENDING,
-  );
+  const pendingList = payments.filter((p) => p.status === PaymentStatus.PENDING);
 
   const paidAmount = sumBy(paidList, (p) => p.amount);
   const receivedPendingAmount = sumBy(pendingList, (p) => p.receivedAmount);
-  const overpaidAmount = sumBy(paidList, (p) =>
-    Math.max(0, p.receivedAmount - p.amount),
-  );
+  const overpaidAmount = sumBy(paidList, (p) => Math.max(0, p.receivedAmount - p.amount));
 
   // Kiện đã chốt lấy theo số đã trả, kiện đang lưu kho lấy phí hiện tại nhưng không nhỏ hơn số đã có
   const totalFee = pkg.isActive
@@ -169,9 +151,7 @@ function buildInvoice(
 
   if (totalFee === 0 && receivedPendingAmount === 0) return null;
 
-  const dueAmount = pkg.isActive
-    ? Math.max(0, totalFee - paidAmount - receivedPendingAmount)
-    : 0;
+  const dueAmount = pkg.isActive ? Math.max(0, totalFee - paidAmount - receivedPendingAmount) : 0;
 
   return {
     packageId: pkg.packageId,
@@ -186,8 +166,7 @@ function buildInvoice(
     receivedPendingAmount,
     dueAmount,
     overpaidAmount,
-    needsRefundReview:
-      !pkg.isActive && (receivedPendingAmount > 0 || overpaidAmount > 0),
+    needsRefundReview: !pkg.isActive && (receivedPendingAmount > 0 || overpaidAmount > 0),
     pendingPayment: pkg.isActive ? pickPendingPayment(payments) : null,
     payments: buildInvoicePayments(payments),
   };
@@ -199,15 +178,12 @@ export function buildInvoices(
   payments: InvoicePaymentInput[],
 ): BuildInvoicesResult {
   const relevant = payments.filter(
-    (p) =>
-      p.status === PaymentStatus.PAID || p.status === PaymentStatus.PENDING,
+    (p) => p.status === PaymentStatus.PAID || p.status === PaymentStatus.PENDING,
   );
 
   const subscriptionReceipts = relevant
     .filter(
-      (p) =>
-        p.paymentType === PaymentType.MONTHLY_SUBSCRIPTION &&
-        p.status === PaymentStatus.PAID,
+      (p) => p.paymentType === PaymentType.MONTHLY_SUBSCRIPTION && p.status === PaymentStatus.PAID,
     )
     .map((p) => ({
       orderCode: p.orderCode,

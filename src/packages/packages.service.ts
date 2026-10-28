@@ -10,7 +10,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { HydratedDocument, Model, Types } from 'mongoose';
 import * as crypto from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -38,19 +38,27 @@ import { FaceVerificationService } from '../ai/services/face-verification.servic
 import { PaymentsService } from '../payments/payments.service';
 import { PaymentType } from '../payments/enums/payment.enums';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
-import { generateUniquePinCode } from './utils/pin-code.util';
 import { PickupAttemptLimiter } from './utils/pickup-attempt-limiter';
-import { claimPackageForPickup } from './utils/package-claim';
 import type { VerifyFaceHardwareResult } from '../ai/interfaces/face-verification.interface';
-import { normalizeShipperName, resolveSessionName } from './utils/shipper-name.util';
+import { normalizeShipperName, resolveSessionName } from './utils/shipper-verification.util';
 import {
   EXPIRY_WARNING_HOURS,
+  PICKUPABLE_STATUSES,
   buildExpiringSoonFilter,
   buildOverdueFilter,
+  claimPackageForPickup,
   computeExpiredAt,
+  releaseBoxAfterPickup,
   resolveStorageLimitHours,
-} from './utils/package-expiry.util';
-import { assertTrackingNumberNotInUse, normalizeTrackingNumber } from './utils/tracking-code.util';
+} from './utils/package-status.util';
+import {
+  assertTrackingNumberNotInUse,
+  generateUniquePinCode,
+  normalizeTrackingNumber,
+  verifyDynamicQrToken,
+} from './utils/package-code.util';
+import { normalizeCode } from '../common/utils/text.util';
+import { isKioskRequest } from '../auth/guards/pickup-auth.guard';
 import {
   DEPOSIT_TTL_MS,
   DROP_OFF_UNLOCK_MS,
@@ -61,10 +69,10 @@ import {
   generateDepositToken,
   hashDepositToken,
   verifyDepositToken,
-} from './utils/deposit-token.util';
+} from './utils/package-code.util';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
 import { SmsService } from '../sms/sms.service';
-import { toE164Vn } from '../sms/utils/phone.util';
+import { toE164Vn } from '../common/utils/text.util';
 import {
   OTP_MAX_SENDS_PER_HOUR,
   OTP_RESEND_INTERVAL_MS,
@@ -74,7 +82,7 @@ import {
   generateOtp,
   hashOtp,
   verifyOtp,
-} from './utils/otp.util';
+} from './utils/shipper-verification.util';
 
 // Khóa mở tủ bằng ứng dụng 15 phút khi một tài khoản nhập sai 5 lần trong 15 phút ở cùng một trạm
 const APP_PICKUP_MAX_FAILURES = 5;
@@ -125,15 +133,12 @@ export class PackagesService {
     authSource?: string,
     actorId?: string,
   ): string | null {
-    if (authSource === 'DEVICE' || !actorId) return null;
+    if (isKioskRequest(authSource) || !actorId) return null;
     return `${lockerCode}:${actorId}`;
   }
 
   // Chặn thao tác khi khóa đếm đang bị khóa do nhập sai quá nhiều lần
-  private assertNotLockedOut(
-    limiter: PickupAttemptLimiter,
-    key: string | null,
-  ): void {
+  private assertNotLockedOut(limiter: PickupAttemptLimiter, key: string | null): void {
     if (!key) return;
     const remainingSeconds = limiter.getRemainingLockSeconds(key);
     if (remainingSeconds > 0) {
@@ -155,7 +160,7 @@ export class PackagesService {
 
   // Tài xế bắt đầu gửi hàng: giữ chỗ ngăn tủ, mở khóa và tạo kiện ở trạng thái chờ đặt hàng; kiện chỉ được ghi nhận và báo cho cư dân khi cảm biến xác nhận hàng đã nằm trong ngăn
   async dropOff(dto: DropOffPackageDto) {
-    const formattedLockerCode = dto.lockerCode.trim().toUpperCase();
+    const formattedLockerCode = normalizeCode(dto.lockerCode);
     const locker = await this.lockerModel
       .findOne({ code: formattedLockerCode })
       .populate('buildingId', 'name code pricingPolicy');
@@ -325,10 +330,7 @@ export class PackagesService {
       throw error;
     }
 
-    await this.boxModel.updateOne(
-      { _id: box._id },
-      { $set: { currentPackageId: newPackage._id } },
-    );
+    await this.boxModel.updateOne({ _id: box._id }, { $set: { currentPackageId: newPackage._id } });
 
     // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT; thời gian mở dài hơn lúc nhận hàng để tài xế kịp kéo cửa
     this.mqttService
@@ -370,9 +372,7 @@ export class PackagesService {
       throw new BadRequestException('Mã kiện hàng không hợp lệ');
     }
 
-    const pkg = await this.packageModel
-      .findById(id)
-      .select('+depositTokenHash');
+    const pkg = await this.packageModel.findById(id).select('+depositTokenHash');
     if (!pkg) {
       throw new NotFoundException('Kiện hàng không tồn tại trong hệ thống');
     }
@@ -682,35 +682,124 @@ export class PackagesService {
     };
   }
 
-  // Thẩm định tính hợp lệ của mã QR Token động sinh từ màn hình LCD trạm tủ
-  verifyDynamicQrToken(apiKey: string, stationCode: string, token: string): boolean {
-    if (!apiKey || !stationCode || !token) {
-      return false;
+  // Tạo yêu cầu thanh toán phí nhận hàng, trả về null khi kiện không còn phí cần nộp
+  private async buildPaymentRequiredResult(
+    locker: HydratedDocument<Locker>,
+    pkg: HydratedDocument<Package>,
+    isKiosk: boolean,
+    logTag: string,
+  ) {
+    const feeInfo = await this.paymentsService.checkFee(String(pkg._id));
+    if (feeInfo.feeDue <= 0) return null;
+
+    const intent = await this.paymentsService.createPaymentIntent(
+      {
+        packageId: String(pkg._id),
+        paymentType: PaymentType.OVERDUE_PICKUP,
+      },
+      undefined,
+      { isKiosk },
+    );
+
+    const paymentMessage = feeInfo.isOverdue
+      ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng nộp phí để mở tủ.'
+      : 'Vui lòng thanh toán phí lượt nhận hàng để mở tủ.';
+
+    // Chỉ phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR trên màn hình LCD khi thao tác trực tiếp tại Kiosk
+    if (isKiosk) {
+      await this.mqttService.publishPaymentRequired(locker.code, pkg.boxNumber, {
+        orderCode: intent.orderCode,
+        feeAmount: intent.amount,
+        qrPayload: intent.qrPayload,
+        paymentUrl: intent.paymentUrl,
+        residentName: pkg.receiverName,
+        message: paymentMessage,
+      });
+    } else {
+      this.logger.log(
+        `${logTag} Cư dân thao tác nhận hàng qua Mobile App (Kiện #${String(pkg._id)}) - Bỏ qua lệnh hiển thị QR trên màn hình LCD`,
+      );
     }
 
-    const cleanToken = token.trim().toUpperCase();
-    const currentWindow = Math.floor(Date.now() / 1000 / 60);
-    const windowsToCheck = [currentWindow, currentWindow - 1];
+    return {
+      requiresPayment: true,
+      action: 'PAYMENT_REQUIRED',
+      message: paymentMessage,
+      packageId: String(pkg._id),
+      boxNumber: pkg.boxNumber,
+      feeAmount: intent.amount,
+      orderCode: intent.orderCode,
+      paymentUrl: intent.paymentUrl,
+      qrPayload: intent.qrPayload,
+      qrCodeUrl: intent.qrCodeUrl,
+      recipientAccount: intent.recipientAccount,
+      description: intent.description,
+      expiresAt: intent.expiresAt,
+    };
+  }
 
-    return windowsToCheck.some((window) => {
-      const payload = `${apiKey}${stationCode.trim().toUpperCase()}${window}`;
-      const expectedToken = crypto
-        .createHash('sha256')
-        .update(payload)
-        .digest('hex')
-        .substring(0, 6)
-        .toUpperCase();
-      return expectedToken === cleanToken;
+  // Hoàn tất lượt nhận hàng gồm chiếm kiện, mở khóa qua MQTT, giải phóng ngăn và ghi nhật ký
+  private async completePickup(params: {
+    locker: HydratedDocument<Locker>;
+    pkg: HydratedDocument<Package>;
+    claimErrorMessage: string;
+    action: LockerAction;
+    message: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    const { locker, pkg, claimErrorMessage, action, message, metadata } = params;
+
+    // Chiếm quyền nhận kiện bằng một lệnh cập nhật duy nhất để hai yêu cầu đồng thời không cùng mở tủ
+    const claimedPkg = await claimPackageForPickup(this.packageModel, pkg._id);
+    if (!claimedPkg) {
+      throw new BadRequestException(claimErrorMessage);
+    }
+
+    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT ngay sau khi chiếm quyền nhận kiện
+    this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber).catch((err) => {
+      this.logger.error(
+        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
+      );
     });
+
+    await releaseBoxAfterPickup(this.boxModel, pkg.boxId);
+
+    await this.activityLogsService.recordLockerAction({
+      locker,
+      boxNumber: pkg.boxNumber,
+      packageId: pkg._id,
+      action,
+      performedBy: pkg.receiverPhone,
+      status: 'SUCCESS',
+      actor: {
+        userId: pkg.residentId,
+        name: pkg.receiverName,
+        phone: pkg.receiverPhone,
+        role: Role.RESIDENT,
+      },
+      metadata,
+    });
+
+    return {
+      message,
+      package: {
+        _id: String(pkg._id),
+        trackingNumber: pkg.trackingNumber,
+        status: claimedPkg.status,
+        pickedUpAt: claimedPkg.pickedUpAt,
+      },
+      boxNumber: pkg.boxNumber,
+      action: 'OPEN_DOOR',
+    };
   }
 
   // Xác thực mã OTP 6 số tại màn hình trạm tủ hoặc ứng dụng di động để mở khóa lấy đồ
   async pickupWithOtp(dto: PickupOtpDto, authSource?: string, actorId?: string) {
-    const isKiosk = authSource === 'DEVICE';
+    const isKiosk = isKioskRequest(authSource);
 
     const locker = await this.lockerModel
       .findOne({
-        code: dto.lockerCode.trim().toUpperCase(),
+        code: normalizeCode(dto.lockerCode),
       })
       .select('+apiKey');
 
@@ -723,7 +812,7 @@ export class PackagesService {
 
     // Kiểm tra tính hợp lệ của mã QR Token động nếu được gửi kèm để chứng minh cự ly gần
     if (dto.qrProofToken) {
-      const isTokenValid = this.verifyDynamicQrToken(locker.apiKey, locker.code, dto.qrProofToken);
+      const isTokenValid = verifyDynamicQrToken(locker.apiKey, locker.code, dto.qrProofToken);
 
       if (!isTokenValid) {
         throw new BadRequestException(
@@ -736,7 +825,7 @@ export class PackagesService {
       lockerId: locker._id,
       pinCode: dto.pinCode.trim(),
       status: {
-        $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
+        $in: PICKUPABLE_STATUSES,
       },
     });
 
@@ -753,111 +842,30 @@ export class PackagesService {
     }
 
     // Kiểm tra phí dịch vụ và tính hợp lệ của thời hạn nhận hàng
-    const feeInfo = await this.paymentsService.checkFee(String(pkg._id));
-    if (feeInfo.feeDue > 0) {
-      const intent = await this.paymentsService.createPaymentIntent(
-        {
-          packageId: String(pkg._id),
-          paymentType: PaymentType.OVERDUE_PICKUP,
-        },
-        undefined,
-        { isKiosk },
-      );
-
-      const paymentMessage = feeInfo.isOverdue
-        ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng nộp phí để mở tủ.'
-        : 'Vui lòng thanh toán phí lượt nhận hàng để mở tủ.';
-
-      // Chỉ phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR trên màn hình LCD khi thao tác trực tiếp tại Kiosk
-      if (isKiosk) {
-        await this.mqttService.publishPaymentRequired(locker.code, pkg.boxNumber, {
-          orderCode: intent.orderCode,
-          feeAmount: intent.amount,
-          qrPayload: intent.qrPayload,
-          paymentUrl: intent.paymentUrl,
-          residentName: pkg.receiverName,
-          message: paymentMessage,
-        });
-      } else {
-        this.logger.log(
-          `[MOBILE_PICKUP] Cư dân thao tác nhận hàng qua Mobile App (Kiện #${String(pkg._id)}) - Bỏ qua lệnh hiển thị QR trên màn hình LCD`,
-        );
-      }
-
-      return {
-        requiresPayment: true,
-        action: 'PAYMENT_REQUIRED',
-        message: paymentMessage,
-        packageId: String(pkg._id),
-        boxNumber: pkg.boxNumber,
-        feeAmount: intent.amount,
-        orderCode: intent.orderCode,
-        paymentUrl: intent.paymentUrl,
-        qrPayload: intent.qrPayload,
-        qrCodeUrl: intent.qrCodeUrl,
-        recipientAccount: intent.recipientAccount,
-        description: intent.description,
-        expiresAt: intent.expiresAt,
-      };
-    }
-
-    // Chiếm quyền nhận kiện bằng một lệnh cập nhật duy nhất để hai yêu cầu đồng thời không cùng mở tủ
-    const claimedPkg = await claimPackageForPickup(this.packageModel, pkg._id);
-    if (!claimedPkg) {
-      throw new BadRequestException('Mã OTP không chính xác hoặc bưu kiện đã được lấy trước đó');
-    }
-
-    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT ngay sau khi chiếm quyền nhận kiện
-    this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber).catch((err) => {
-      this.logger.error(
-        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
-      );
-    });
-
-    const box = await this.boxModel.findById(pkg.boxId);
-    if (box) {
-      box.status = BoxStatus.AVAILABLE;
-      box.currentPackageId = undefined;
-      box.doorStatus = DoorStatus.OPEN;
-      box.hasItem = false;
-      await box.save();
-    }
-
-    await this.activityLogsService.recordLockerAction({
+    const paymentRequired = await this.buildPaymentRequiredResult(
       locker,
-      boxNumber: pkg.boxNumber,
-      packageId: pkg._id,
+      pkg,
+      isKiosk,
+      '[MOBILE_PICKUP]',
+    );
+    if (paymentRequired) return paymentRequired;
+
+    return this.completePickup({
+      locker,
+      pkg,
+      claimErrorMessage: 'Mã OTP không chính xác hoặc bưu kiện đã được lấy trước đó',
       action: dto.qrProofToken ? LockerAction.PICKUP_QR : LockerAction.PICKUP_OTP,
-      performedBy: pkg.receiverPhone,
-      status: 'SUCCESS',
-      actor: {
-        userId: pkg.residentId,
-        name: pkg.receiverName,
-        phone: pkg.receiverPhone,
-        role: Role.RESIDENT,
-      },
+      message: `Xác thực mã OTP thành công. Cửa ngăn tủ số ${pkg.boxNumber} đã mở!`,
       metadata: dto.qrProofToken ? { verificationMethod: 'DYNAMIC_QR' } : undefined,
     });
-
-    return {
-      message: `Xác thực mã OTP thành công. Cửa ngăn tủ số ${pkg.boxNumber} đã mở!`,
-      package: {
-        _id: String(pkg._id),
-        trackingNumber: pkg.trackingNumber,
-        status: claimedPkg.status,
-        pickedUpAt: claimedPkg.pickedUpAt,
-      },
-      boxNumber: pkg.boxNumber,
-      action: 'OPEN_DOOR',
-    };
   }
 
   // Quét mã QR token trước camera của trạm tủ hoặc ứng dụng di động để mở khóa lấy đồ
   async pickupWithQr(dto: PickupQrDto, authSource?: string, actorId?: string) {
-    const isKiosk = authSource === 'DEVICE';
+    const isKiosk = isKioskRequest(authSource);
 
     const locker = await this.lockerModel.findOne({
-      code: dto.lockerCode.trim().toUpperCase(),
+      code: normalizeCode(dto.lockerCode),
     });
 
     if (!locker) {
@@ -871,7 +879,7 @@ export class PackagesService {
       lockerId: locker._id,
       qrCodeToken: dto.qrCodeToken.trim(),
       status: {
-        $in: [PackageStatus.WAITING_FOR_PICKUP, PackageStatus.OVERDUE],
+        $in: PICKUPABLE_STATUSES,
       },
     });
 
@@ -882,102 +890,21 @@ export class PackagesService {
     if (attemptKey) this.appPickupLimiter.reset(attemptKey);
 
     // Kiểm tra phí dịch vụ và tính hợp lệ của thời hạn nhận hàng
-    const feeInfo = await this.paymentsService.checkFee(String(pkg._id));
-    if (feeInfo.feeDue > 0) {
-      const intent = await this.paymentsService.createPaymentIntent(
-        {
-          packageId: String(pkg._id),
-          paymentType: PaymentType.OVERDUE_PICKUP,
-        },
-        undefined,
-        { isKiosk },
-      );
-
-      const paymentMessage = feeInfo.isOverdue
-        ? 'Bưu kiện đã quá hạn lưu kho. Vui lòng nộp phí để mở tủ.'
-        : 'Vui lòng thanh toán phí lượt nhận hàng để mở tủ.';
-
-      // Chỉ phát bản tin MQTT yêu cầu trạm tủ hiển thị mã QR trên màn hình LCD khi thao tác trực tiếp tại Kiosk
-      if (isKiosk) {
-        await this.mqttService.publishPaymentRequired(locker.code, pkg.boxNumber, {
-          orderCode: intent.orderCode,
-          feeAmount: intent.amount,
-          qrPayload: intent.qrPayload,
-          paymentUrl: intent.paymentUrl,
-          residentName: pkg.receiverName,
-          message: paymentMessage,
-        });
-      } else {
-        this.logger.log(
-          `[MOBILE_PICKUP_QR] Cư dân thao tác nhận hàng qua Mobile App (Kiện #${String(pkg._id)}) - Bỏ qua lệnh hiển thị QR trên màn hình LCD`,
-        );
-      }
-
-      return {
-        requiresPayment: true,
-        action: 'PAYMENT_REQUIRED',
-        message: paymentMessage,
-        packageId: String(pkg._id),
-        boxNumber: pkg.boxNumber,
-        feeAmount: intent.amount,
-        orderCode: intent.orderCode,
-        paymentUrl: intent.paymentUrl,
-        qrPayload: intent.qrPayload,
-        qrCodeUrl: intent.qrCodeUrl,
-        recipientAccount: intent.recipientAccount,
-        description: intent.description,
-        expiresAt: intent.expiresAt,
-      };
-    }
-
-    // Chiếm quyền nhận kiện bằng một lệnh cập nhật duy nhất để hai yêu cầu đồng thời không cùng mở tủ
-    const claimedPkg = await claimPackageForPickup(this.packageModel, pkg._id);
-    if (!claimedPkg) {
-      throw new BadRequestException('Mã QR không hợp lệ hoặc bưu kiện đã được lấy trước đó');
-    }
-
-    // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT ngay sau khi chiếm quyền nhận kiện
-    this.mqttService.publishDoorUnlock(locker.code, pkg.boxNumber).catch((err) => {
-      this.logger.error(
-        `Lỗi khi phát lệnh mở cửa MQTT cho trạm ${locker.code} ngăn #${pkg.boxNumber}: ${err}`,
-      );
-    });
-
-    const box = await this.boxModel.findById(pkg.boxId);
-    if (box) {
-      box.status = BoxStatus.AVAILABLE;
-      box.currentPackageId = undefined;
-      box.doorStatus = DoorStatus.OPEN;
-      box.hasItem = false;
-      await box.save();
-    }
-
-    await this.activityLogsService.recordLockerAction({
+    const paymentRequired = await this.buildPaymentRequiredResult(
       locker,
-      boxNumber: pkg.boxNumber,
-      packageId: pkg._id,
-      action: LockerAction.PICKUP_QR,
-      performedBy: pkg.receiverPhone,
-      status: 'SUCCESS',
-      actor: {
-        userId: pkg.residentId,
-        name: pkg.receiverName,
-        phone: pkg.receiverPhone,
-        role: Role.RESIDENT,
-      },
-    });
+      pkg,
+      isKiosk,
+      '[MOBILE_PICKUP_QR]',
+    );
+    if (paymentRequired) return paymentRequired;
 
-    return {
+    return this.completePickup({
+      locker,
+      pkg,
+      claimErrorMessage: 'Mã QR không hợp lệ hoặc bưu kiện đã được lấy trước đó',
+      action: LockerAction.PICKUP_QR,
       message: `Quét mã QR thành công. Cửa ngăn tủ số ${pkg.boxNumber} đã mở!`,
-      package: {
-        _id: String(pkg._id),
-        trackingNumber: pkg.trackingNumber,
-        status: claimedPkg.status,
-        pickedUpAt: claimedPkg.pickedUpAt,
-      },
-      boxNumber: pkg.boxNumber,
-      action: 'OPEN_DOOR',
-    };
+    });
   }
 
   // Nhận diện khuôn mặt và khóa tạm trạm tủ khi liên tiếp bị từ chối vì sai khuôn mặt hoặc khuôn mặt giả
@@ -985,21 +912,15 @@ export class PackagesService {
     lockerCode: string,
     imageBuffer: Buffer,
   ): Promise<VerifyFaceHardwareResult> {
-    const faceKey = lockerCode.trim().toUpperCase();
+    const faceKey = normalizeCode(lockerCode);
     this.assertNotLockedOut(this.facePickupLimiter, faceKey);
 
     try {
-      const result = await this.faceVerificationService.verifyAndUnlock(
-        lockerCode,
-        imageBuffer,
-      );
+      const result = await this.faceVerificationService.verifyAndUnlock(lockerCode, imageBuffer);
       this.facePickupLimiter.reset(faceKey);
       return result;
     } catch (error) {
-      if (
-        error instanceof UnauthorizedException ||
-        error instanceof ForbiddenException
-      ) {
+      if (error instanceof UnauthorizedException || error instanceof ForbiddenException) {
         this.facePickupLimiter.recordFailure(faceKey);
       }
       throw error;
@@ -1127,14 +1048,11 @@ export class PackagesService {
         .select('name email apartment')
         .lean();
 
-      await this.notificationsService.notifyAdminsPackageOverdue(
-        String(pkg.buildingId),
-        {
-          ...packageInfo,
-          residentName: resident?.name || 'Cư dân',
-          apartment: resident?.apartment,
-        },
-      );
+      await this.notificationsService.notifyAdminsPackageOverdue(String(pkg.buildingId), {
+        ...packageInfo,
+        residentName: resident?.name || 'Cư dân',
+        apartment: resident?.apartment,
+      });
 
       await this.mailService.sendPackageOverdueNotice(
         resident?.email,
@@ -1173,10 +1091,7 @@ export class PackagesService {
           trackingNumber: pkg.trackingNumber,
           boxNumber: pkg.boxNumber,
           lockerName: locker?.name || 'Trạm Tủ Thông Minh',
-          hoursLeft: Math.max(
-            1,
-            Math.ceil((pkg.expiredAt.getTime() - now.getTime()) / 3600000),
-          ),
+          hoursLeft: Math.max(1, Math.ceil((pkg.expiredAt.getTime() - now.getTime()) / 3600000)),
         },
       );
     }

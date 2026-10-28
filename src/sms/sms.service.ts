@@ -1,5 +1,6 @@
 import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { getErrorMessage } from '../common/utils/text.util';
 
 const DEFAULT_TIMEOUT_MS = 8000;
 
@@ -20,8 +21,7 @@ export class SmsService {
     const username = this.configService.get<string>('SMS_GATEWAY_USERNAME') || '';
     const password = this.configService.get<string>('SMS_GATEWAY_PASSWORD') || '';
     this.gatewayAuth = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
-    this.timeoutMs =
-      Number(this.configService.get<string>('SMS_TIMEOUT_MS')) || DEFAULT_TIMEOUT_MS;
+    this.timeoutMs = Number(this.configService.get<string>('SMS_TIMEOUT_MS')) || DEFAULT_TIMEOUT_MS;
     this.devMode = this.configService.get<string>('SMS_DEV_MODE') === 'true';
 
     const requested = this.configService.get<string>('SMS_PROVIDER') || 'console';
@@ -33,9 +33,7 @@ export class SmsService {
       );
     }
     this.provider =
-      requested === 'android-gateway' && isGatewayConfigured
-        ? 'android-gateway'
-        : 'console';
+      requested === 'android-gateway' && isGatewayConfigured ? 'android-gateway' : 'console';
 
     this.logger.log(`Dịch vụ SMS đang dùng provider: ${this.provider}`);
   }
@@ -62,19 +60,13 @@ export class SmsService {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
-      this.logger.error(
-        `Không kết nối được cổng SMS: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      throw new BadGatewayException(
-        'Không gửi được tin nhắn SMS lúc này, vui lòng thử lại sau',
-      );
+      this.logger.error(`Không kết nối được cổng SMS: ${getErrorMessage(error)}`);
+      throw new BadGatewayException('Không gửi được tin nhắn SMS lúc này, vui lòng thử lại sau');
     }
 
     if (!response.ok) {
       this.logger.error(`Cổng SMS từ chối yêu cầu: HTTP ${response.status}`);
-      throw new BadGatewayException(
-        'Không gửi được tin nhắn SMS lúc này, vui lòng thử lại sau',
-      );
+      throw new BadGatewayException('Không gửi được tin nhắn SMS lúc này, vui lòng thử lại sau');
     }
   }
 }

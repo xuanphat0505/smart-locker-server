@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from '../users/schemas/user.schema';
+import { getErrorMessage } from '../common/utils/text.util';
 
 // Kết quả Expo trả về cho từng tin nhắn đã gửi
 interface ExpoPushTicket {
@@ -53,27 +54,20 @@ export class PushNotificationsService {
 
     try {
       await this.userModel
-        .updateMany(
-          { devicePushToken: { $in: deadTokens } },
-          { $unset: { devicePushToken: 1 } },
-        )
+        .updateMany({ devicePushToken: { $in: deadTokens } }, { $unset: { devicePushToken: 1 } })
         .exec();
       this.logger.log(
         `Đã xóa ${deadTokens.length} Expo Push Token không còn hợp lệ (DeviceNotRegistered)`,
       );
     } catch (error) {
-      this.logger.error(
-        `Không xóa được token push hết hạn: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Không xóa được token push hết hạn: ${getErrorMessage(error)}`);
     }
   }
 
   // Gửi thông báo đẩy đến một hoặc nhiều thiết bị di động sử dụng Expo Push API
   async sendPushNotification(payload: ExpoPushPayload): Promise<boolean> {
     const recipients = Array.isArray(payload.to) ? payload.to : [payload.to];
-    const validTokens = recipients.filter((token) =>
-      this.isExpoPushToken(token),
-    );
+    const validTokens = recipients.filter((token) => this.isExpoPushToken(token));
 
     if (validTokens.length === 0) {
       this.logger.warn('Không có Expo Push Token hợp lệ để gửi thông báo đẩy');
@@ -84,18 +78,16 @@ export class PushNotificationsService {
       // Expo chỉ nhận tối đa 100 tin nhắn mỗi yêu cầu nên chia lô khi gửi nhiều thiết bị
       let allSucceeded = true;
       for (let i = 0; i < validTokens.length; i += EXPO_MAX_BATCH_SIZE) {
-        const messages = validTokens
-          .slice(i, i + EXPO_MAX_BATCH_SIZE)
-          .map((token) => ({
-            to: token,
-            sound: payload.sound ?? 'default',
-            title: payload.title,
-            body: payload.body,
-            data: payload.data ?? {},
-            priority: payload.priority ?? 'high',
-            channelId: payload.channelId ?? 'default',
-            badge: payload.badge,
-          }));
+        const messages = validTokens.slice(i, i + EXPO_MAX_BATCH_SIZE).map((token) => ({
+          to: token,
+          sound: payload.sound ?? 'default',
+          title: payload.title,
+          body: payload.body,
+          data: payload.data ?? {},
+          priority: payload.priority ?? 'high',
+          channelId: payload.channelId ?? 'default',
+          badge: payload.badge,
+        }));
 
         const response = await fetch(this.expoPushUrl, {
           method: 'POST',
@@ -109,9 +101,7 @@ export class PushNotificationsService {
 
         if (!response.ok) {
           const errorText = await response.text();
-          this.logger.error(
-            `Lỗi từ máy chủ Expo Push API: ${response.status} - ${errorText}`,
-          );
+          this.logger.error(`Lỗi từ máy chủ Expo Push API: ${response.status} - ${errorText}`);
           allSucceeded = false;
           continue;
         }
@@ -128,9 +118,7 @@ export class PushNotificationsService {
       }
       return allSucceeded;
     } catch (error) {
-      this.logger.error(
-        `Lỗi ngoại lệ khi gửi thông báo đẩy qua Expo: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi ngoại lệ khi gửi thông báo đẩy qua Expo: ${getErrorMessage(error)}`);
       return false;
     }
   }

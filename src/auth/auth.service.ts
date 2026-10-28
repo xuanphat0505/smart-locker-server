@@ -14,7 +14,7 @@ import * as bcrypt from 'bcrypt';
 import { Types } from 'mongoose';
 import { authenticator } from 'otplib';
 import * as qrcode from 'qrcode';
-import { encryptText, decryptText } from '../common/utils/crypto.util';
+import { encryptText, decryptText, sha256Hex } from '../common/utils/security.util';
 import {
   JwtPayload,
   LoginResponse,
@@ -41,6 +41,7 @@ import { BuildingsService } from '../buildings/buildings.service';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { FaceVerificationService } from '../ai/services/face-verification.service';
+import { normalizeCode } from '../common/utils/text.util';
 
 @Injectable()
 export class AuthService {
@@ -386,8 +387,8 @@ export class AuthService {
       }
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const hashedOtp = crypto.createHash('sha256').update(otp).digest('hex');
+    const otp = crypto.randomInt(100000, 1000000).toString();
+    const hashedOtp = sha256Hex(otp);
     const expires = new Date(Date.now() + 10 * 60 * 1000);
 
     await this.usersService.setResetPasswordOtp(user._id.toString(), hashedOtp, expires);
@@ -414,7 +415,7 @@ export class AuthService {
       throw new BadRequestException('Mã OTP đã hết hạn. Vui lòng gửi lại yêu cầu mới');
     }
 
-    const hashedOtp = crypto.createHash('sha256').update(dto.otp).digest('hex');
+    const hashedOtp = sha256Hex(dto.otp);
 
     if (hashedOtp !== user.resetPasswordOtp) {
       throw new BadRequestException('Mã OTP không chính xác. Vui lòng kiểm tra lại');
@@ -550,7 +551,7 @@ export class AuthService {
 
     const isRecovery = dto.isRecoveryCode || dto.isBackupCode;
     if (isRecovery) {
-      const codeInput = dto.code.trim().toUpperCase();
+      const codeInput = normalizeCode(dto.code);
       let matchedIndex = -1;
 
       for (let i = 0; i < (user.twoFactorAuth.recoveryCodes || []).length; i++) {

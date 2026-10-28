@@ -9,6 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { normalizeCode } from '../common/utils/text.util';
 
 @WebSocketGateway({
   cors: {
@@ -17,9 +18,7 @@ import { Logger } from '@nestjs/common';
   },
   namespace: '/notifications',
 })
-export class NotificationsGateway
-  implements OnGatewayConnection, OnGatewayDisconnect 
-{
+export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
@@ -85,12 +84,12 @@ export class NotificationsGateway
     @MessageBody() payload: { lockerCode: string },
   ): Promise<void> {
     if (payload?.lockerCode) {
-      const roomName = `locker_${payload.lockerCode.trim().toUpperCase()}`;
+      const roomName = `locker_${normalizeCode(payload.lockerCode)}`;
       await client.join(roomName);
       this.logger.log(`Client ${client.id} đã tham gia phòng tủ: ${roomName}`);
       client.emit('joined_locker', {
         room: roomName,
-        message: `Đã kết nối phòng trạm tủ ${payload.lockerCode.trim().toUpperCase()}`,
+        message: `Đã kết nối phòng trạm tủ ${normalizeCode(payload.lockerCode)}`,
       });
     }
   }
@@ -102,7 +101,7 @@ export class NotificationsGateway
     @MessageBody() payload: { lockerCode: string },
   ): Promise<void> {
     if (payload?.lockerCode) {
-      const roomName = `locker_${payload.lockerCode.trim().toUpperCase()}`;
+      const roomName = `locker_${normalizeCode(payload.lockerCode)}`;
       await client.leave(roomName);
       this.logger.log(`Client ${client.id} đã rời khỏi phòng tủ: ${roomName}`);
     }
@@ -119,12 +118,12 @@ export class NotificationsGateway
       timestamp?: number;
     },
   ): void {
-    const roomName = `locker_${lockerCode.trim().toUpperCase()}`;
+    const roomName = `locker_${normalizeCode(lockerCode)}`;
     this.logger.log(
       `Phát sự kiện HARDWARE_STATUS tới phòng ${roomName}: [${eventData.event}] Ngăn #${eventData.boxNumber}, Cửa: ${eventData.doorStatus}, Hàng: ${eventData.hasItem}`,
     );
     this.server.to(roomName).emit('HARDWARE_STATUS', {
-      lockerCode: lockerCode.trim().toUpperCase(),
+      lockerCode: normalizeCode(lockerCode),
       ...eventData,
       timestamp: eventData.timestamp || Date.now(),
     });
@@ -196,10 +195,10 @@ export class NotificationsGateway
       reason?: string;
     },
   ): void {
-    const roomName = `locker_${lockerCode.trim().toUpperCase()}`;
+    const roomName = `locker_${normalizeCode(lockerCode)}`;
     const eventName = payload.status === 'CONFIRMED' ? 'DEPOSIT_CONFIRMED' : 'DEPOSIT_CANCELLED';
     this.server.to(roomName).emit(eventName, {
-      lockerCode: lockerCode.trim().toUpperCase(),
+      lockerCode: normalizeCode(lockerCode),
       ...payload,
       timestamp: Date.now(),
     });

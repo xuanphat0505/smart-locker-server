@@ -14,11 +14,9 @@ import { Subject } from 'rxjs';
 import { Locker } from '../lockers/schemas/locker.schema';
 import { LockerStatus } from '../lockers/enums';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
-import {
-  ActivityCategory,
-  ActivityStatus,
-} from '../activity-logs/enums/activity-log.enums';
+import { ActivityCategory, ActivityStatus } from '../activity-logs/enums/activity-log.enums';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { normalizeCode, getErrorMessage } from '../common/utils/text.util';
 
 // Cấu trúc dữ liệu bản tin trạng thái phần cứng nhận từ MQTT
 interface MqttStatusPayload {
@@ -75,8 +73,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   // Thiết lập kết nối và đăng ký các sự kiện với MQTT Broker
   private connect() {
     const rawBrokerUrl =
-      this.configService.get<string>('MQTT_BROKER_URL') ||
-      'broker.hivemq.com:1883';
+      this.configService.get<string>('MQTT_BROKER_URL') || 'broker.hivemq.com:1883';
 
     let brokerUrl = rawBrokerUrl.trim();
     if (
@@ -110,9 +107,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     if (username) options.username = username;
     if (password) options.password = password;
 
-    this.logger.log(
-      `Đang kết nối MQTT Broker: ${brokerUrl} (Client ID: ${clientId})`,
-    );
+    this.logger.log(`Đang kết nối MQTT Broker: ${brokerUrl} (Client ID: ${clientId})`);
 
     try {
       this.client = mqtt.connect(brokerUrl, options);
@@ -124,9 +119,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
         // Đăng ký nhận phản hồi trạng thái từ các trạm tủ
         this.client?.subscribe('smartlocker/+/status', (err) => {
           if (err) {
-            this.logger.error(
-              `Lỗi khi đăng ký topic smartlocker/+/status: ${err.message}`,
-            );
+            this.logger.error(`Lỗi khi đăng ký topic smartlocker/+/status: ${err.message}`);
           } else {
             this.logger.log('Đã đăng ký lắng nghe topic: smartlocker/+/status');
           }
@@ -150,17 +143,12 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
         this.logger.log('Đang thử kết nối lại MQTT Broker...');
       });
     } catch (error) {
-      this.logger.error(
-        `Khởi tạo MQTT Client thất bại: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Khởi tạo MQTT Client thất bại: ${getErrorMessage(error)}`);
     }
   }
 
   // Xử lý và phân tích bản tin MQTT nhận được từ các trạm tủ
-  private async handleIncomingMessage(
-    topic: string,
-    payload: Buffer,
-  ): Promise<void> {
+  private async handleIncomingMessage(topic: string, payload: Buffer): Promise<void> {
     try {
       const messageStr = payload.toString();
       this.logger.log(`[MQTT_IN] [${topic}]: ${messageStr}`);
@@ -171,7 +159,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
         const topicParts = topic.split('/');
         const fallbackDevice = topicParts.length > 1 ? topicParts[1] : '';
         const rawDevice = data.device || fallbackDevice;
-        const lockerCode = rawDevice.trim().toUpperCase();
+        const lockerCode = normalizeCode(rawDevice);
 
         if (lockerCode) {
           const rawEvent = data.event || data.status || '';
@@ -211,9 +199,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
                 },
               });
             }
-            this.logger.warn(
-              `Trạm tủ ${lockerCode} vừa ngắt kết nối (OFFLINE)`,
-            );
+            this.logger.warn(`Trạm tủ ${lockerCode} vừa ngắt kết nối (OFFLINE)`);
           } else if (
             event === 'ONLINE' ||
             event === 'HEARTBEAT' ||
@@ -286,7 +272,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     boxNumber: number,
     durationMs = 5000,
   ): Promise<boolean> {
-    const formattedCode = lockerCode.trim().toUpperCase();
+    const formattedCode = normalizeCode(lockerCode);
     const topic = `smartlocker/${formattedCode}/control`;
 
     const payload = JSON.stringify({
@@ -310,9 +296,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
       this.client.publish(topic, payload, { qos: 1 }, (err) => {
         if (err) {
-          this.logger.error(
-            `Lỗi khi phát lệnh UNLOCK tới ${topic}: ${err.message}`,
-          );
+          this.logger.error(`Lỗi khi phát lệnh UNLOCK tới ${topic}: ${err.message}`);
           resolve(false);
         } else {
           this.logger.log(
@@ -337,7 +321,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       message?: string;
     },
   ): Promise<boolean> {
-    const formattedCode = lockerCode.trim().toUpperCase();
+    const formattedCode = normalizeCode(lockerCode);
     const topic = `smartlocker/${formattedCode}/control`;
 
     const payload = JSON.stringify({
@@ -366,9 +350,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
       this.client.publish(topic, payload, { qos: 1 }, (err) => {
         if (err) {
-          this.logger.error(
-            `Lỗi khi phát lệnh PAYMENT_REQUIRED tới ${topic}: ${err.message}`,
-          );
+          this.logger.error(`Lỗi khi phát lệnh PAYMENT_REQUIRED tới ${topic}: ${err.message}`);
           resolve(false);
         } else {
           this.logger.log(

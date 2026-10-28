@@ -1,7 +1,7 @@
 import { Prop, Schema, SchemaFactory, raw } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { BuildingStatus } from '../enums/building-status.enum';
-import { DEFAULT_PRICING_POLICY } from '../../payments/utils/pricing-policy.util';
+import { DEFAULT_PRICING_POLICY } from '../../payments/utils/storage-pricing.util';
 
 @Schema({ timestamps: true })
 export class Building extends Document {

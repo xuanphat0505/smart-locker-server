@@ -10,6 +10,14 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Locker } from '../../lockers/schemas/locker.schema';
 
+// Nguồn xác thực của yêu cầu lấy hàng: thiết bị trạm tủ dùng API key hoặc ứng dụng di động dùng JWT
+export const PICKUP_AUTH_SOURCE = { DEVICE: 'DEVICE', MOBILE: 'MOBILE' } as const;
+
+// Yêu cầu đến từ thiết bị Kiosk của trạm tủ, không phải từ ứng dụng di động
+export function isKioskRequest(authSource?: string): boolean {
+  return authSource === PICKUP_AUTH_SOURCE.DEVICE;
+}
+
 @Injectable()
 export class PickupAuthGuard implements CanActivate {
   constructor(
@@ -20,19 +28,14 @@ export class PickupAuthGuard implements CanActivate {
   // Xác thực nguồn gọi mở tủ: bắt buộc x-api-key hợp lệ đối với thiết bị Kiosk hoặc Bearer Token đối với ứng dụng di động
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const apiKey =
-      request.headers['x-api-key'] || request.headers['x-device-key'];
+    const apiKey = request.headers['x-api-key'] || request.headers['x-device-key'];
     const authHeader = request.headers['authorization'];
 
     if (apiKey) {
       const lockerCode =
-        request.headers['x-locker-code'] ||
-        request.query?.lockerCode ||
-        request.body?.lockerCode;
+        request.headers['x-locker-code'] || request.query?.lockerCode || request.body?.lockerCode;
       if (!lockerCode) {
-        throw new BadRequestException(
-          'Yêu cầu từ thiết bị cần có mã trạm tủ lockerCode',
-        );
+        throw new BadRequestException('Yêu cầu từ thiết bị cần có mã trạm tủ lockerCode');
       }
 
       const locker = await this.lockerModel
@@ -45,7 +48,7 @@ export class PickupAuthGuard implements CanActivate {
         );
       }
 
-      request.authSource = 'DEVICE';
+      request.authSource = PICKUP_AUTH_SOURCE.DEVICE;
       request.locker = locker;
       return true;
     }
@@ -55,12 +58,10 @@ export class PickupAuthGuard implements CanActivate {
       try {
         const decoded = await this.jwtService.verifyAsync(token);
         request.user = decoded;
-        request.authSource = 'MOBILE';
+        request.authSource = PICKUP_AUTH_SOURCE.MOBILE;
         return true;
       } catch {
-        throw new UnauthorizedException(
-          'Bearer Token không hợp lệ hoặc đã hết hạn',
-        );
+        throw new UnauthorizedException('Bearer Token không hợp lệ hoặc đã hết hạn');
       }
     }
 

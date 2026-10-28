@@ -25,14 +25,11 @@ import {
   VerifyShipperOtpDto,
   VerifyFirebaseTokenDto,
 } from './dto';
-import {
-  QueryAdminPackagesDto,
-  ReturnPackageDto,
-} from './dto/admin-package.dto';
+import { QueryAdminPackagesDto, ReturnPackageDto } from './dto/admin-package.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Throttle } from '@nestjs/throttler';
-import { PickupAuthGuard } from '../auth/guards/pickup-auth.guard';
+import { PickupAuthGuard, isKioskRequest } from '../auth/guards/pickup-auth.guard';
 import { PickupThrottlerGuard } from '../auth/guards/pickup-throttler.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -133,10 +130,8 @@ export class PackagesController {
     @Headers('x-locker-code') lockerCodeHeader?: string,
   ) {
     // Ảnh khuôn mặt chỉ được nhận từ camera của trạm tủ, không nhận từ ứng dụng di động
-    if (req?.authSource !== 'DEVICE') {
-      throw new ForbiddenException(
-        'Nhận diện khuôn mặt chỉ khả dụng trực tiếp tại trạm tủ',
-      );
+    if (!isKioskRequest(req?.authSource)) {
+      throw new ForbiddenException('Nhận diện khuôn mặt chỉ khả dụng trực tiếp tại trạm tủ');
     }
 
     const finalDto: PickupFaceDto = {
@@ -185,10 +180,7 @@ export class PackagesController {
   @Roles(Role.RESIDENT)
   @ApiBearerAuth('JWT-auth')
   @ApiGetQrTokenDoc()
-  async getQrToken(
-    @Param('id') id: string,
-    @Request() req: { user: AuthenticatedUser },
-  ) {
+  async getQrToken(@Param('id') id: string, @Request() req: { user: AuthenticatedUser }) {
     return this.packagesService.getQrToken(id, req.user.userId);
   }
 
@@ -198,10 +190,7 @@ export class PackagesController {
   @Roles(Role.RESIDENT, Role.BUILDING_ADMIN, Role.SYSTEM_ADMIN)
   @ApiBearerAuth('JWT-auth')
   @ApiGetPackageByIdDoc()
-  async getPackageById(
-    @Param('id') id: string,
-    @Request() req: { user: AuthenticatedUser },
-  ) {
+  async getPackageById(@Param('id') id: string, @Request() req: { user: AuthenticatedUser }) {
     // Cư dân chỉ xem đơn của mình; quản trị viên xem theo phạm vi tòa nhà và không nhận OTP
     if (req.user.role === Role.RESIDENT) {
       return this.packagesService.getPackageById(id, req.user.userId);
@@ -229,10 +218,7 @@ export class PackagesController {
   @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
   @ApiBearerAuth('JWT-auth')
   @ApiResendOtpDoc()
-  async resendOtp(
-    @Param('id') id: string,
-    @Request() req: { user: AuthenticatedUser },
-  ) {
+  async resendOtp(@Param('id') id: string, @Request() req: { user: AuthenticatedUser }) {
     return this.packagesAdminService.resendOtp(id, req.user);
   }
 }

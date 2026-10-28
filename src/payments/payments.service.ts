@@ -16,22 +16,14 @@ import { Locker } from '../lockers/schemas/locker.schema';
 import { Box } from '../lockers/schemas/box.schema';
 import { User } from '../users/schemas/user.schema';
 import { PackageStatus } from '../packages/enums/package.enums';
-import { claimPackageForPickup } from '../packages/utils/package-claim';
 import {
-  BoxStatus,
-  DoorStatus,
-  LockerAction,
-} from '../lockers/enums/locker.enums';
-import {
-  PaymentMethod,
-  PaymentStatus,
-  PaymentType,
-} from './enums/payment.enums';
-import {
-  CreatePaymentIntentDto,
-  CreateSubscriptionIntentDto,
-  SepayWebhookDto,
-} from './dto';
+  PICKUPABLE_STATUSES,
+  claimPackageForPickup,
+  releaseBoxAfterPickup,
+} from '../packages/utils/package-status.util';
+import { LockerAction } from '../lockers/enums/locker.enums';
+import { PaymentMethod, PaymentStatus, PaymentType } from './enums/payment.enums';
+import { CreatePaymentIntentDto, CreateSubscriptionIntentDto, SepayWebhookDto } from './dto';
 import {
   generateSepayCheckoutUrl,
   initSepayOneTimePaymentFields,
@@ -41,9 +33,10 @@ import {
   parseSepayPgCodeFromContent,
   lookupOrderInvoiceByPayCode,
   generateOrderCode,
-} from './utils/sepay.util';
-import { generateVietQrPayload } from './utils/vietqr.util';
-import { isPaymentConfigured } from '../buildings/utils/payment-config.util';
+  generateVietQrPayload,
+  isPaymentConfigured,
+  type ConfiguredBankAccount,
+} from './utils/payment-gateway.util';
 import {
   PaymentReceipt,
   calculateRemaining,
@@ -54,14 +47,10 @@ import {
 } from './utils/payment-receipt.util';
 import {
   buildPricingTiers,
+  calculateStorageFee,
   mergePricingPolicy,
-} from './utils/pricing-policy.util';
-import { calculateStorageFee } from './utils/storage-fee.util';
-import {
-  InvoicePackageInput,
-  InvoicePaymentInput,
-  buildInvoices,
-} from './utils/invoice.util';
+} from './utils/storage-pricing.util';
+import { InvoicePackageInput, InvoicePaymentInput, buildInvoices } from './utils/invoice.util';
 import { MqttService } from '../mqtt/mqtt.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -70,13 +59,12 @@ import {
   NotificationPriority,
   NotificationType,
 } from '../notifications/enums/notification.enums';
-import {
-  ActivityCategory,
-  ActivityStatus,
-} from '../activity-logs/enums/activity-log.enums';
+import { ActivityCategory, ActivityStatus } from '../activity-logs/enums/activity-log.enums';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { Role } from '../auth/enums/role.enum';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
+import { canAccessBuilding, toIdString } from '../common/utils/building-scope.util';
+import { getErrorMessage, normalizeCode } from '../common/utils/text.util';
 
 @Injectable()
 export class PaymentsService {
@@ -102,11 +90,7 @@ export class PaymentsService {
   ) {}
 
   // Tính phí lưu kho theo biểu phí của tòa nhà, người có gói tháng được miễn phí lâu hơn và phụ thu nhẹ hơn
-  calculateFee(
-    pkg: Package,
-    building: Building,
-    hasActiveSubscription: boolean,
-  ) {
+  calculateFee(pkg: Package, building: Building, hasActiveSubscription: boolean) {
     const policy = mergePricingPolicy(building?.pricingPolicy);
 
     const result = calculateStorageFee({
@@ -124,9 +108,7 @@ export class PaymentsService {
   // Lấy biểu phí lưu kho của tòa nhà để cư dân xem, không kèm thông tin tài khoản ngân hàng
   async getResidentPricing(buildingId?: string) {
     if (!buildingId || !Types.ObjectId.isValid(buildingId)) {
-      throw new BadRequestException(
-        'Tài khoản chưa được liên kết với Tòa nhà nào',
-      );
+      throw new BadRequestException('Tài khoản chưa được liên kết với Tòa nhà nào');
     }
 
     const building = await this.buildingModel
@@ -149,42 +131,15 @@ export class PaymentsService {
     };
   }
 
-  // Chuyển giá trị ObjectId hoặc document đã populate về chuỗi mã định danh để so sánh quyền sở hữu
-  private toIdString(value: unknown): string {
-    if (value && typeof value === 'object' && '_id' in value) {
-      return String((value as { _id: unknown })._id);
-    }
-    return String(value);
-  }
-
   // Chỉ cho phép chủ sở hữu, Ban Quản Lý cùng tòa nhà hoặc System Admin truy cập dữ liệu thanh toán
-  private assertResourceAccess(
-    user: AuthenticatedUser,
-    ownerId: unknown,
-    buildingId: unknown,
-  ) {
-    if (user.role === Role.SYSTEM_ADMIN) return;
+  private assertResourceAccess(user: AuthenticatedUser, ownerId: unknown, buildingId: unknown) {
+    if (canAccessBuilding(user, buildingId)) return;
 
-    if (
-      user.role === Role.BUILDING_ADMIN &&
-      user.buildingId &&
-      buildingId &&
-      this.toIdString(buildingId) === String(user.buildingId)
-    ) {
+    if (user.role === Role.RESIDENT && ownerId && toIdString(ownerId) === String(user.userId)) {
       return;
     }
 
-    if (
-      user.role === Role.RESIDENT &&
-      ownerId &&
-      this.toIdString(ownerId) === String(user.userId)
-    ) {
-      return;
-    }
-
-    throw new ForbiddenException(
-      'Bạn không có quyền truy cập dữ liệu thanh toán này',
-    );
+    throw new ForbiddenException('Bạn không có quyền truy cập dữ liệu thanh toán này');
   }
 
   // Kiểm tra phí của bưu kiện sau khi xác nhận người gọi là chủ đơn, Ban Quản Lý tòa nhà hoặc System Admin
@@ -193,10 +148,7 @@ export class PaymentsService {
       throw new BadRequestException('Mã bưu kiện không hợp lệ');
     }
 
-    const pkg = await this.packageModel
-      .findById(packageId)
-      .select('residentId buildingId')
-      .lean();
+    const pkg = await this.packageModel.findById(packageId).select('residentId buildingId').lean();
 
     if (!pkg) {
       throw new NotFoundException('Không tìm thấy bưu kiện');
@@ -232,6 +184,46 @@ export class PaymentsService {
     return this.calculateFee(pkg, building, hasActiveSubscription);
   }
 
+  // Sinh mã đơn hàng chưa trùng với đơn nào đã có, thử lại tối đa vài lần khi gặp va chạm
+  private async generateUniqueOrderCode(): Promise<number> {
+    let orderCode = generateOrderCode();
+    let collisionCheck = await this.paymentModel.findOne({ orderCode });
+    let attempts = 0;
+    while (collisionCheck && attempts < 5) {
+      orderCode = generateOrderCode();
+      collisionCheck = await this.paymentModel.findOne({ orderCode });
+      attempts++;
+    }
+    return orderCode;
+  }
+
+  // Dựng liên kết thanh toán, mã QR ảnh và payload VietQR của một đơn từ tài khoản thụ hưởng
+  private async buildSepaySession(params: {
+    orderCode: number;
+    amount: number;
+    description: string;
+    bankAccount: ConfiguredBankAccount;
+  }) {
+    const { orderCode, amount, description, bankAccount } = params;
+    const bankName = bankAccount.bankName || 'MBBank';
+
+    const qrCodeUrl = generateSepayQrUrl({
+      bankName,
+      accountNumber: bankAccount.accountNumber,
+      amount,
+      description,
+    });
+    const paymentUrl = await generateSepayCheckoutUrl({ orderCode, amount, description });
+    const qrPayload = generateVietQrPayload({
+      bankBin: bankAccount.bankBin,
+      accountNumber: bankAccount.accountNumber,
+      amount,
+      description,
+    });
+
+    return { bankName, qrCodeUrl, paymentUrl, qrPayload };
+  }
+
   // Khởi tạo phiên giao dịch thanh toán VietQR và sinh chuỗi dữ liệu phục vụ hiển thị
   async createPaymentIntent(
     dto: CreatePaymentIntentDto,
@@ -260,9 +252,7 @@ export class PaymentsService {
 
     const feeInfo = await this.checkFee(dto.packageId);
     if (feeInfo.feeDue <= 0) {
-      throw new BadRequestException(
-        'Bưu kiện hiện không có khoản phí nào cần thanh toán',
-      );
+      throw new BadRequestException('Bưu kiện hiện không có khoản phí nào cần thanh toán');
     }
 
     if (feeInfo.isPendingRetrieval) {
@@ -279,14 +269,10 @@ export class PaymentsService {
       })
       .sort({ createdAt: -1 });
 
-    if (
-      activePendingPayment &&
-      activePendingPayment.amount === feeInfo.feeDue
-    ) {
+    if (activePendingPayment && activePendingPayment.amount === feeInfo.feeDue) {
       // Gia hạn thời gian chờ thanh toán thêm 15 phút tính từ thời điểm hiện tại
       const renewedExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-      const isKioskMode =
-        options.isKiosk ?? activePendingPayment.isKiosk ?? false;
+      const isKioskMode = options.isKiosk ?? activePendingPayment.isKiosk ?? false;
 
       activePendingPayment.expiresAt = renewedExpiresAt;
       activePendingPayment.isKiosk = isKioskMode;
@@ -300,10 +286,7 @@ export class PaymentsService {
         amount: activePendingPayment.amount,
         description:
           activePendingPayment.description ||
-          generateSepayTransferContent(
-            'LOCKER',
-            activePendingPayment.orderCode,
-          ),
+          generateSepayTransferContent('LOCKER', activePendingPayment.orderCode),
       });
 
       this.logger.log(
@@ -334,39 +317,15 @@ export class PaymentsService {
       ? await this.cancelPendingAndCollectCredit({ packageId: pkg._id })
       : emptyCredit();
 
-    let orderCode = generateOrderCode();
-    let collisionCheck = await this.paymentModel.findOne({ orderCode });
-    let attempts = 0;
-    while (collisionCheck && attempts < 5) {
-      orderCode = generateOrderCode();
-      collisionCheck = await this.paymentModel.findOne({ orderCode });
-      attempts++;
-    }
+    const orderCode = await this.generateUniqueOrderCode();
 
     const description = generateSepayTransferContent('LOCKER', orderCode);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-    const bankName = building.bankAccount.bankName || 'MBBank';
-    const accountNumber = building.bankAccount.accountNumber;
-
-    const qrCodeUrl = generateSepayQrUrl({
-      bankName,
-      accountNumber,
-      amount: feeInfo.feeDue,
-      description,
-    });
-
-    const paymentUrl = await generateSepayCheckoutUrl({
+    const { bankName, qrCodeUrl, paymentUrl, qrPayload } = await this.buildSepaySession({
       orderCode,
       amount: feeInfo.feeDue,
       description,
-    });
-
-    const qrPayload = generateVietQrPayload({
-      bankBin: building.bankAccount.bankBin,
-      accountNumber,
-      amount: feeInfo.feeDue,
-      description,
+      bankAccount: building.bankAccount,
     });
 
     const payment = await this.paymentModel.create({
@@ -385,7 +344,7 @@ export class PaymentsService {
       recipientAccount: {
         bankBin: building.bankAccount.bankBin,
         bankName,
-        accountNumber,
+        accountNumber: building.bankAccount.accountNumber,
         accountName: building.bankAccount.accountName,
       },
       status: PaymentStatus.PENDING,
@@ -427,10 +386,7 @@ export class PaymentsService {
   }
 
   // Khởi tạo phiên giao dịch thanh toán đăng ký hoặc gia hạn gói tháng VIP 30k
-  async createSubscriptionIntent(
-    dto: CreateSubscriptionIntentDto,
-    userId: string,
-  ) {
+  async createSubscriptionIntent(dto: CreateSubscriptionIntentDto, userId: string) {
     if (!userId || !Types.ObjectId.isValid(userId)) {
       throw new BadRequestException('Mã người dùng không hợp lệ');
     }
@@ -442,9 +398,7 @@ export class PaymentsService {
 
     const buildingId = dto?.buildingId || user.buildingId;
     if (!buildingId || !Types.ObjectId.isValid(buildingId)) {
-      throw new BadRequestException(
-        'Vui lòng chọn tòa nhà để đăng ký gói dịch vụ tháng',
-      );
+      throw new BadRequestException('Vui lòng chọn tòa nhà để đăng ký gói dịch vụ tháng');
     }
 
     const building = await this.buildingModel.findById(buildingId);
@@ -458,8 +412,7 @@ export class PaymentsService {
       );
     }
 
-    const subscriptionFee =
-      building.pricingPolicy?.monthlySubscriptionFee ?? 30000;
+    const subscriptionFee = building.pricingPolicy?.monthlySubscriptionFee ?? 30000;
 
     // Tìm giao dịch đăng ký gói tháng chờ thanh toán gần nhất của cư dân
     const activePending = await this.paymentModel
@@ -474,10 +427,7 @@ export class PaymentsService {
       // Gia hạn thời gian chờ thanh toán thêm 15 phút tính từ thời điểm hiện tại
       const renewedExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
       activePending.expiresAt = renewedExpiresAt;
-      if (
-        buildingId &&
-        String(activePending.buildingId) !== String(buildingId)
-      ) {
+      if (buildingId && String(activePending.buildingId) !== String(buildingId)) {
         activePending.buildingId = building._id as unknown as Types.ObjectId;
       }
       await activePending.save();
@@ -486,8 +436,7 @@ export class PaymentsService {
         orderCode: activePending.orderCode,
         amount: activePending.amount,
         description:
-          activePending.description ||
-          generateSepayTransferContent('SUB', activePending.orderCode),
+          activePending.description || generateSepayTransferContent('SUB', activePending.orderCode),
       });
 
       this.logger.log(
@@ -515,39 +464,15 @@ export class PaymentsService {
         })
       : emptyCredit();
 
-    let orderCode = generateOrderCode();
-    let collisionCheck = await this.paymentModel.findOne({ orderCode });
-    let attempts = 0;
-    while (collisionCheck && attempts < 5) {
-      orderCode = generateOrderCode();
-      collisionCheck = await this.paymentModel.findOne({ orderCode });
-      attempts++;
-    }
+    const orderCode = await this.generateUniqueOrderCode();
 
     const description = generateSepayTransferContent('SUB', orderCode);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-    const bankName = building.bankAccount.bankName || 'MBBank';
-    const accountNumber = building.bankAccount.accountNumber;
-
-    const qrCodeUrl = generateSepayQrUrl({
-      bankName,
-      accountNumber,
-      amount: subscriptionFee,
-      description,
-    });
-
-    const paymentUrl = await generateSepayCheckoutUrl({
+    const { bankName, qrCodeUrl, paymentUrl, qrPayload } = await this.buildSepaySession({
       orderCode,
       amount: subscriptionFee,
       description,
-    });
-
-    const qrPayload = generateVietQrPayload({
-      bankBin: building.bankAccount.bankBin,
-      accountNumber,
-      amount: subscriptionFee,
-      description,
+      bankAccount: building.bankAccount,
     });
 
     const payment = await this.paymentModel.create({
@@ -561,7 +486,7 @@ export class PaymentsService {
       recipientAccount: {
         bankBin: building.bankAccount.bankBin,
         bankName,
-        accountNumber,
+        accountNumber: building.bankAccount.accountNumber,
         accountName: building.bankAccount.accountName,
       },
       status: PaymentStatus.PENDING,
@@ -612,9 +537,7 @@ export class PaymentsService {
         $set: {
           status: PaymentStatus.PAID,
           paidAt: new Date(),
-          paymentMethod: isSandbox
-            ? PaymentMethod.SANDBOX
-            : PaymentMethod.VIETQR,
+          paymentMethod: isSandbox ? PaymentMethod.SANDBOX : PaymentMethod.VIETQR,
         },
       },
       { new: true },
@@ -645,9 +568,7 @@ export class PaymentsService {
     if (payment.paymentType === PaymentType.MONTHLY_SUBSCRIPTION) {
       const user = await this.userModel.findById(payment.userId);
       if (!user) {
-        throw new NotFoundException(
-          'Không tìm thấy tài khoản cư dân của giao dịch',
-        );
+        throw new NotFoundException('Không tìm thấy tài khoản cư dân của giao dịch');
       }
 
       const now = Date.now();
@@ -667,8 +588,7 @@ export class PaymentsService {
 
       return {
         success: true,
-        message:
-          'Đăng ký gói tháng VIP thành công! Hạn sử dụng được cộng thêm 30 ngày.',
+        message: 'Đăng ký gói tháng VIP thành công! Hạn sử dụng được cộng thêm 30 ngày.',
         subscriptionExpiresAt: newExpiry,
         subscriptionStatus: 'ACTIVE',
       };
@@ -676,18 +596,12 @@ export class PaymentsService {
 
     const pkg = await this.packageModel.findById(payment.packageId);
     if (!pkg) {
-      throw new NotFoundException(
-        'Không tìm thấy kiện hàng liên kết với giao dịch',
-      );
+      throw new NotFoundException('Không tìm thấy kiện hàng liên kết với giao dịch');
     }
 
     const now = Date.now();
-    const baseTime = pkg.paidUntil
-      ? Math.max(new Date(pkg.paidUntil).getTime(), now)
-      : now;
-    const newPaidUntil = new Date(
-      baseTime + (payment.extensionHours || 24) * 3600 * 1000,
-    );
+    const baseTime = pkg.paidUntil ? Math.max(new Date(pkg.paidUntil).getTime(), now) : now;
+    const newPaidUntil = new Date(baseTime + (payment.extensionHours || 24) * 3600 * 1000);
 
     // Chỉ khôi phục sang WAITING_FOR_PICKUP nếu đơn hàng đang ở trạng thái OVERDUE
     const updateSet: Record<string, any> = {
@@ -725,18 +639,13 @@ export class PaymentsService {
 
     return {
       success: true,
-      message:
-        'Thanh toán phí lưu kho thành công! Hạn nhận hàng được gia hạn thêm 24 giờ.',
+      message: 'Thanh toán phí lưu kho thành công! Hạn nhận hàng được gia hạn thêm 24 giờ.',
       paidUntil: newPaidUntil,
     };
   }
 
   // Xác thực thiết bị Kiosk bằng x-api-key và chỉ cho mở khi giao dịch là phiên Kiosk thuộc đúng trạm tủ của thiết bị
-  async completeKioskPickupForDevice(
-    orderCode: number,
-    apiKey?: string,
-    lockerCode?: string,
-  ) {
+  async completeKioskPickupForDevice(orderCode: number, apiKey?: string, lockerCode?: string) {
     if (!apiKey || !lockerCode) {
       throw new UnauthorizedException(
         'Yêu cầu từ thiết bị cần có x-api-key và mã trạm tủ x-locker-code',
@@ -744,7 +653,7 @@ export class PaymentsService {
     }
 
     const locker = await this.lockerModel
-      .findOne({ code: String(lockerCode).trim().toUpperCase() })
+      .findOne({ code: normalizeCode(String(lockerCode)) })
       .select('+apiKey');
 
     if (!locker || locker.apiKey !== apiKey) {
@@ -754,11 +663,7 @@ export class PaymentsService {
     }
 
     const payment = await this.paymentModel.findOne({ orderCode });
-    if (
-      !payment ||
-      !payment.isKiosk ||
-      this.toIdString(payment.lockerId) !== String(locker._id)
-    ) {
+    if (!payment || !payment.isKiosk || toIdString(payment.lockerId) !== String(locker._id)) {
       throw new ForbiddenException(
         'Giao dịch này không thuộc phiên thanh toán tại trạm tủ của thiết bị',
       );
@@ -775,16 +680,12 @@ export class PaymentsService {
     });
 
     if (!payment) {
-      throw new BadRequestException(
-        'Giao dịch chưa được thanh toán hoặc không tồn tại',
-      );
+      throw new BadRequestException('Giao dịch chưa được thanh toán hoặc không tồn tại');
     }
 
     const pkg = await this.packageModel.findById(payment.packageId);
     if (!pkg) {
-      throw new NotFoundException(
-        'Không tìm thấy kiện hàng liên kết với giao dịch',
-      );
+      throw new NotFoundException('Không tìm thấy kiện hàng liên kết với giao dịch');
     }
     const boxNumber = payment.boxNumber ?? pkg.boxNumber;
 
@@ -799,11 +700,9 @@ export class PaymentsService {
     }
 
     // Chiếm quyền nhận kiện và cộng phí bằng một lệnh cập nhật duy nhất để webhook và thiết bị gọi song song không mở tủ hai lần
-    const claimedPkg = await claimPackageForPickup(
-      this.packageModel,
-      pkg._id,
-      { totalFeePaid: payment.amount },
-    );
+    const claimedPkg = await claimPackageForPickup(this.packageModel, pkg._id, {
+      totalFeePaid: payment.amount,
+    });
     if (!claimedPkg) {
       return alreadyProcessedResult;
     }
@@ -815,14 +714,7 @@ export class PaymentsService {
     }
 
     const boxId = payment.boxId || pkg.boxId;
-    const box = await this.boxModel.findById(boxId);
-    if (box) {
-      box.status = BoxStatus.AVAILABLE;
-      box.currentPackageId = undefined;
-      box.doorStatus = DoorStatus.OPEN;
-      box.hasItem = false;
-      await box.save();
-    }
+    await releaseBoxAfterPickup(this.boxModel, boxId);
 
     await this.activityLogsService.recordLockerAction({
       locker: locker ?? {
@@ -868,10 +760,7 @@ export class PaymentsService {
     return this.paymentModel
       .find({ userId: new Types.ObjectId(userId) })
       .sort({ createdAt: -1 })
-      .populate(
-        'packageId',
-        'trackingNumber receiverPhone receiverName apartment',
-      )
+      .populate('packageId', 'trackingNumber receiverPhone receiverName apartment')
       .populate('buildingId', 'name code')
       .populate('lockerId', 'name code');
   }
@@ -884,10 +773,7 @@ export class PaymentsService {
     const residentId = new Types.ObjectId(userId);
 
     const [resident, payments] = await Promise.all([
-      this.userModel
-        .findById(residentId)
-        .select('subscriptionStatus subscriptionExpiresAt')
-        .lean(),
+      this.userModel.findById(residentId).select('subscriptionStatus subscriptionExpiresAt').lean(),
       this.paymentModel
         .find({
           userId: residentId,
@@ -905,17 +791,11 @@ export class PaymentsService {
       .map((p) => p.packageId)
       .filter((id): id is Types.ObjectId => !!id);
 
-    const activeStatuses = [
-      PackageStatus.WAITING_FOR_PICKUP,
-      PackageStatus.OVERDUE,
-    ];
+    const activeStatuses = PICKUPABLE_STATUSES;
 
     const packages = await this.packageModel
       .find({
-        $or: [
-          { residentId, status: { $in: activeStatuses } },
-          { _id: { $in: paidPackageIds } },
-        ],
+        $or: [{ residentId, status: { $in: activeStatuses } }, { _id: { $in: paidPackageIds } }],
       })
       .populate('buildingId', 'name pricingPolicy')
       .populate('lockerId', 'name');
@@ -960,18 +840,13 @@ export class PaymentsService {
       amount: p.amount,
       receivedAmount: p.receivedAmount || 0,
       paidAt: p.paidAt,
-      receiptAt: p.receipts?.length
-        ? p.receipts[p.receipts.length - 1].receivedAt
-        : undefined,
+      receiptAt: p.receipts?.length ? p.receipts[p.receipts.length - 1].receivedAt : undefined,
       description: p.description,
       expiresAt: p.expiresAt,
       sepayTransactionId: p.sepayTransactionId,
     }));
 
-    const { invoices, subscriptionReceipts } = buildInvoices(
-      packageInputs,
-      paymentInputs,
-    );
+    const { invoices, subscriptionReceipts } = buildInvoices(packageInputs, paymentInputs);
 
     // Phân trang trên danh sách đã sắp xếp (hóa đơn còn nợ luôn ở trang đầu), biên nhận gói tháng chỉ trả ở trang đầu
     const { page, limit } = query;
@@ -990,17 +865,12 @@ export class PaymentsService {
   async getPaymentByOrderCode(orderCode: number, user: AuthenticatedUser) {
     const payment = await this.paymentModel
       .findOne({ orderCode })
-      .populate(
-        'packageId',
-        'trackingNumber receiverPhone receiverName apartment',
-      )
+      .populate('packageId', 'trackingNumber receiverPhone receiverName apartment')
       .populate('buildingId', 'name code')
       .populate('lockerId', 'name code');
 
     if (!payment) {
-      throw new NotFoundException(
-        `Không tìm thấy giao dịch với mã #${orderCode}`,
-      );
+      throw new NotFoundException(`Không tìm thấy giao dịch với mã #${orderCode}`);
     }
 
     this.assertResourceAccess(user, payment.userId, payment.buildingId);
@@ -1014,10 +884,7 @@ export class PaymentsService {
     outcome: 'PARTIAL' | 'PAID',
   ): Promise<void> {
     const resident = payment.userId
-      ? await this.userModel
-          .findById(payment.userId)
-          .select('name phone')
-          .lean()
+      ? await this.userModel.findById(payment.userId).select('name phone').lean()
       : null;
     const received = payment.receivedAmount ?? 0;
     const overpaid = outcome === 'PAID' && received > payment.amount;
@@ -1044,10 +911,7 @@ export class PaymentsService {
       },
       buildingId: payment.buildingId,
       category: ActivityCategory.PAYMENT,
-      status:
-        outcome === 'PARTIAL' || overpaid
-          ? ActivityStatus.WARNING
-          : ActivityStatus.SUCCESS,
+      status: outcome === 'PARTIAL' || overpaid ? ActivityStatus.WARNING : ActivityStatus.SUCCESS,
       title: outcome === 'PARTIAL' ? `${title} (chưa đủ tiền)` : title,
       description,
       target: payment.packageId
@@ -1139,33 +1003,21 @@ export class PaymentsService {
   }
 
   // Xử lý dữ liệu webhook từ SePay để tự động gạch nợ và phân nhánh nghiệp vụ an toàn
-  async handleSepayWebhook(
-    dto: SepayWebhookDto,
-    authHeader?: string,
-    xSecretKey?: string,
-  ) {
+  async handleSepayWebhook(dto: SepayWebhookDto, authHeader?: string, xSecretKey?: string) {
     const expectedSecret =
-      process.env.SEPAY_WEBHOOK_SECRET ||
-      process.env.SEPAY_SECRET_KEY ||
-      process.env.SECRET_KEY;
+      process.env.SEPAY_WEBHOOK_SECRET || process.env.SEPAY_SECRET_KEY || process.env.SECRET_KEY;
 
     if (expectedSecret) {
-      const token =
-        xSecretKey || authHeader?.replace(/^(Apikey|Bearer)\s+/i, '').trim();
+      const token = xSecretKey || authHeader?.replace(/^(Apikey|Bearer)\s+/i, '').trim();
 
       if (token !== expectedSecret) {
-        this.logger.warn(
-          `[SEPAY_WEBHOOK] Token xác thực webhook không hợp lệ: ${token}`,
-        );
-        throw new UnauthorizedException(
-          'Chữ ký xác thực webhook SePay không hợp lệ',
-        );
+        this.logger.warn(`[SEPAY_WEBHOOK] Token xác thực webhook không hợp lệ: ${token}`);
+        throw new UnauthorizedException('Chữ ký xác thực webhook SePay không hợp lệ');
       }
     }
 
     const isPgIpn =
-      dto.notification_type === 'ORDER_PAID' ||
-      Boolean(dto.order?.order_invoice_number);
+      dto.notification_type === 'ORDER_PAID' || Boolean(dto.order?.order_invoice_number);
 
     let orderCode: number | null = null;
     let transferAmount = 0;
@@ -1210,8 +1062,7 @@ export class PaymentsService {
       );
       return {
         success: false,
-        message:
-          'Nội dung chuyển khoản không chứa mã đơn hàng orderCode hợp lệ',
+        message: 'Nội dung chuyển khoản không chứa mã đơn hàng orderCode hợp lệ',
       };
     }
 
@@ -1224,9 +1075,7 @@ export class PaymentsService {
         `[SEPAY_WEBHOOK] Giao dịch cho đơn #${orderCode} không có mã giao dịch, không thể chống tính trùng nếu cổng gửi lại`,
       );
     }
-    const receivedNow = Number.isFinite(transferAmount)
-      ? Math.max(0, transferAmount)
-      : 0;
+    const receivedNow = Number.isFinite(transferAmount) ? Math.max(0, transferAmount) : 0;
     const isGatewayConfirmed = isPgIpn;
 
     // Bước 1: ghi nhận khoản tiền vào đơn, bỏ qua nếu mã giao dịch này đã được tính trước đó
@@ -1249,10 +1098,7 @@ export class PaymentsService {
     if (!recorded) {
       const alreadyHandled = await this.paymentModel.exists({
         orderCode,
-        $or: [
-          { status: PaymentStatus.PAID },
-          { 'receipts.transactionId': transactionId },
-        ],
+        $or: [{ status: PaymentStatus.PAID }, { 'receipts.transactionId': transactionId }],
       });
 
       if (alreadyHandled) {
@@ -1276,10 +1122,7 @@ export class PaymentsService {
     }
 
     // Bước 2: chỉ chốt PAID khi đã đủ tiền; cổng thanh toán PG đã tự đảm bảo số tiền nên luôn được chốt
-    if (
-      !isGatewayConfirmed &&
-      !isFullyPaid(recorded.amount, recorded.receivedAmount)
-    ) {
+    if (!isGatewayConfirmed && !isFullyPaid(recorded.amount, recorded.receivedAmount)) {
       this.logger.warn(
         `[SEPAY_WEBHOOK] Giao dịch #${orderCode} chưa đủ tiền: đã nhận ${recorded.receivedAmount}/${recorded.amount} VNĐ, giữ đơn ở trạng thái PENDING`,
       );
@@ -1292,10 +1135,7 @@ export class PaymentsService {
         message: 'Đã nhận một phần số tiền, đơn chưa được chốt',
         orderCode,
         receivedAmount: recorded.receivedAmount,
-        remainingAmount: calculateRemaining(
-          recorded.amount,
-          recorded.receivedAmount,
-        ),
+        remainingAmount: calculateRemaining(recorded.amount, recorded.receivedAmount),
       };
     }
 
@@ -1303,9 +1143,7 @@ export class PaymentsService {
       {
         _id: recorded._id,
         status: PaymentStatus.PENDING,
-        ...(isGatewayConfirmed
-          ? {}
-          : { receivedAmount: { $gte: recorded.amount } }),
+        ...(isGatewayConfirmed ? {} : { receivedAmount: { $gte: recorded.amount } }),
       },
       {
         $set: {
@@ -1340,16 +1178,13 @@ export class PaymentsService {
   private requestEInvoice(payment: PaymentDocument): void {
     void this.eInvoiceService.issueForPayment(payment).catch((error: unknown) => {
       this.logger.error(
-        `Lỗi khi yêu cầu hóa đơn điện tử cho đơn #${payment.orderCode}: ${error instanceof Error ? error.message : String(error)}`,
+        `Lỗi khi yêu cầu hóa đơn điện tử cho đơn #${payment.orderCode}: ${getErrorMessage(error)}`,
       );
     });
   }
 
   // Xử lý nghiệp vụ sau khi đơn đã đủ tiền: kích hoạt gói tháng, mở tủ tại Kiosk hoặc gia hạn lưu kho từ xa
-  private async completePaidPayment(
-    payment: PaymentDocument,
-    orderCode: number,
-  ) {
+  private async completePaidPayment(payment: PaymentDocument, orderCode: number) {
     this.requestEInvoice(payment);
 
     if (payment.paymentType === PaymentType.MONTHLY_SUBSCRIPTION) {
@@ -1397,12 +1232,8 @@ export class PaymentsService {
     const pkg = await this.packageModel.findById(payment.packageId);
     if (pkg) {
       const now = Date.now();
-      const baseTime = pkg.paidUntil
-        ? Math.max(new Date(pkg.paidUntil).getTime(), now)
-        : now;
-      const newPaidUntil = new Date(
-        baseTime + (payment.extensionHours || 24) * 3600 * 1000,
-      );
+      const baseTime = pkg.paidUntil ? Math.max(new Date(pkg.paidUntil).getTime(), now) : now;
+      const newPaidUntil = new Date(baseTime + (payment.extensionHours || 24) * 3600 * 1000);
 
       // Chỉ khôi phục sang WAITING_FOR_PICKUP nếu đơn hàng đang ở trạng thái OVERDUE
       const updateSet: Record<string, any> = {
@@ -1441,8 +1272,7 @@ export class PaymentsService {
 
     return {
       success: true,
-      message:
-        'Thanh toán phí lưu kho từ xa thành công, hạn nhận hàng được gia hạn thêm 24 giờ',
+      message: 'Thanh toán phí lưu kho từ xa thành công, hạn nhận hàng được gia hạn thêm 24 giờ',
       type: 'MOBILE_PICKUP',
       orderCode,
     };
@@ -1452,18 +1282,14 @@ export class PaymentsService {
   async getPaymentStatus(orderCode: number, user: AuthenticatedUser) {
     const payment = await this.paymentModel.findOne({ orderCode });
     if (!payment) {
-      throw new NotFoundException(
-        `Không tìm thấy phiên giao dịch #${orderCode}`,
-      );
+      throw new NotFoundException(`Không tìm thấy phiên giao dịch #${orderCode}`);
     }
 
     this.assertResourceAccess(user, payment.userId, payment.buildingId);
 
     let paidUntil: Date | undefined;
     if (payment.packageId) {
-      const pkg = await this.packageModel
-        .findById(payment.packageId)
-        .select('paidUntil');
+      const pkg = await this.packageModel.findById(payment.packageId).select('paidUntil');
       paidUntil = pkg?.paidUntil;
     }
 

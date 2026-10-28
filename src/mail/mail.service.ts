@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
-import { escapeHtml } from './utils/escape-html.util';
+import { escapeHtml, getErrorMessage } from '../common/utils/text.util';
 
 @Injectable()
 export class MailService {
@@ -15,8 +15,7 @@ export class MailService {
       this.configService.get<string>('MAIL_FROM') ||
       'Smart Locker System <no-reply@smartlocker.vn>';
     this.adminDashboardUrl =
-      this.configService.get<string>('ADMIN_DASHBOARD_URL') ||
-      'http://localhost:5173';
+      this.configService.get<string>('ADMIN_DASHBOARD_URL') || 'http://localhost:5173';
 
     this.initTransporter();
   }
@@ -188,11 +187,7 @@ export class MailService {
   }
 
   // Gửi email chứa mã OTP xác thực đặt lại mật khẩu cho người dùng
-  async sendResetPasswordOtp(
-    email: string,
-    name: string,
-    otp: string,
-  ): Promise<boolean> {
+  async sendResetPasswordOtp(email: string, name: string, otp: string): Promise<boolean> {
     const subject = `[SMART LOCKER] Mã xác thực OTP đặt lại mật khẩu: ${otp}`;
 
     const htmlContent = `
@@ -354,23 +349,18 @@ export class MailService {
       'Lưu ý: đây là hóa đơn thử nghiệm (sandbox), không có giá trị pháp lý và không được gửi tới cơ quan thuế.',
     ].filter((line, index, all) => line !== '' || all[index - 1] !== '');
 
-    return this.sendMail(
-      residentEmail,
-      subject,
-      '',
-      {
-        text: lines.join('\n'),
-        attachments: invoice.pdf
-          ? [
-              {
-                filename: invoice.pdf.filename,
-                content: invoice.pdf.content,
-                contentType: 'application/pdf',
-              },
-            ]
-          : undefined,
-      },
-    );
+    return this.sendMail(residentEmail, subject, '', {
+      text: lines.join('\n'),
+      attachments: invoice.pdf
+        ? [
+            {
+              filename: invoice.pdf.filename,
+              content: invoice.pdf.content,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
+    });
   }
 
   // Phương thức phụ trợ thực hiện gửi thư qua Nodemailer với xử lý lỗi an toàn
@@ -401,14 +391,10 @@ export class MailService {
         attachments,
       });
 
-      this.logger.log(
-        `Đã gửi Email thành công tới: ${toFormatted} | Tiêu đề: "${subject}"`,
-      );
+      this.logger.log(`Đã gửi Email thành công tới: ${toFormatted} | Tiêu đề: "${subject}"`);
       return true;
     } catch (error) {
-      this.logger.error(
-        `Lỗi khi gửi email tới ${toFormatted}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Lỗi khi gửi email tới ${toFormatted}: ${getErrorMessage(error)}`);
       return false;
     }
   }

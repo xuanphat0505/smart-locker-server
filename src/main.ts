@@ -4,7 +4,7 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
-import { assertRequiredEnv } from './common/utils/required-env';
+import { assertRequiredEnv } from './common/utils/security.util';
 
 // Khởi tạo ứng dụng NestJS cấu hình pipe kiểm thực dữ liệu và tài liệu OpenAPI Swagger
 async function bootstrap() {
@@ -62,8 +62,6 @@ async function bootstrap() {
 
   await app.listen(port);
   Logger.log(`🚀 Application is running on: http://localhost:${port}`);
-  Logger.log(
-    `📚 Swagger UI documentation available at: http://localhost:${port}/api/docs`,
-  );
+  Logger.log(`📚 Swagger UI documentation available at: http://localhost:${port}/api/docs`);
 }
 void bootstrap();

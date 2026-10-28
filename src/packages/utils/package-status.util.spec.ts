@@ -2,7 +2,7 @@ import {
   buildOverdueFilter,
   computeExpiredAt,
   resolveStorageLimitHours,
-} from './package-expiry.util';
+} from './package-status.util';
 import { PackageStatus } from '../enums';
 
 describe('package-expiry.util', () => {

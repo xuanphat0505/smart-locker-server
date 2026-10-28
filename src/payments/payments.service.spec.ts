@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 import { PaymentsService } from './payments.service';
-import { generateSepayTransferContent } from './utils/sepay.util';
+import { generateSepayTransferContent } from './utils/payment-gateway.util';
 import { PaymentStatus, PaymentType } from './enums/payment.enums';
 
 describe('PaymentsService.handleSepayWebhook (chuyển thiếu tiền)', () => {
@@ -80,15 +80,11 @@ describe('PaymentsService.handleSepayWebhook (chuyển thiếu tiền)', () => {
     // Chỉ có đúng một lần cập nhật: ghi nhận khoản tiền, không có lần chốt PAID
     expect(paymentModel.findOneAndUpdate).toHaveBeenCalledTimes(1);
     expect(notifications.createNotification).toHaveBeenCalledTimes(1);
-    expect(activityLogs.log).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'WARNING' }),
-    );
+    expect(activityLogs.log).toHaveBeenCalledWith(expect.objectContaining({ status: 'WARNING' }));
   });
 
   it('ghi nhận khoản tiền kèm điều kiện chống tính trùng mã giao dịch', async () => {
-    const { service, paymentModel } = make(
-      makePayment({ receivedAmount: 1000 }),
-    );
+    const { service, paymentModel } = make(makePayment({ receivedAmount: 1000 }));
 
     await service.handleSepayWebhook(webhook(1000, 777) as never);
 
@@ -119,9 +115,7 @@ describe('PaymentsService.handleSepayWebhook (chuyển thiếu tiền)', () => {
     });
 
     expect(paymentModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
-    const [closeFilter] = paymentModel.findOneAndUpdate.mock.calls[1] as [
-      Record<string, unknown>,
-    ];
+    const [closeFilter] = paymentModel.findOneAndUpdate.mock.calls[1] as [Record<string, unknown>];
     expect(closeFilter).toMatchObject({
       status: PaymentStatus.PENDING,
       receivedAmount: { $gte: 15000 },
