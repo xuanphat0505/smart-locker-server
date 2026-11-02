@@ -127,6 +127,30 @@ export class User extends Document {
   @Prop({ required: false })
   subscriptionExpiresAt?: Date;
 
+  // Yêu cầu đổi số điện thoại đang chờ xác nhận bằng OTP SMS; chỉ lưu mã băm của OTP
+  @Prop({
+    type: {
+      phone: { type: String },
+      otp: { type: String, select: false },
+      expiresAt: { type: Date },
+      failedAttempts: { type: Number, default: 0 },
+      lastSentAt: { type: Date },
+      sendCount: { type: Number, default: 0 },
+      sendWindowStartedAt: { type: Date },
+    },
+    _id: false,
+    required: false,
+  })
+  phoneChange?: {
+    phone?: string;
+    otp?: string;
+    expiresAt?: Date;
+    failedAttempts: number;
+    lastSentAt?: Date;
+    sendCount: number;
+    sendWindowStartedAt?: Date;
+  };
+
   // Ghi chú nội bộ của quản trị viên về người dùng
   @Prop({ required: false, trim: true, maxlength: 500 })
   note?: string;

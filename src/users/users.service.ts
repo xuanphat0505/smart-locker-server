@@ -19,6 +19,7 @@ import {
   CreateResidentDto,
   UserProfileResponseDto,
   ChangePasswordDto,
+  UpdateProfileDto,
   EnrollFaceDto,
   UpdateUserByAdminDto,
 } from './dto';
@@ -29,11 +30,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { UploadService } from '../upload/upload.service';
 import { FaceVerificationService } from '../ai/services/face-verification.service';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
-import {
-  ActivityCategory,
-  ActivityStatus,
-} from '../activity-logs/enums/activity-log.enums';
+import { ActivityCategory, ActivityStatus } from '../activity-logs/enums/activity-log.enums';
 import { canAccessBuilding } from '../common/utils/building-scope.util';
+import { assertActiveAccount } from './utils/active-account.util';
 
 @Injectable()
 export class UsersService {
@@ -58,10 +57,7 @@ export class UsersService {
   }
 
   // Khởi tạo tài khoản Ban Quản Lý Tòa Nhà mới do System Admin thực hiện
-  async createBuildingAdmin(
-    dto: CreateBuildingAdminDto,
-    createdByAdminId: string,
-  ): Promise<User> {
+  async createBuildingAdmin(dto: CreateBuildingAdminDto, createdByAdminId: string): Promise<User> {
     const existingEmail = await this.findByEmail(dto.email);
     if (existingEmail) {
       throw new ConflictException('Địa chỉ email này đã được sử dụng');
@@ -87,10 +83,7 @@ export class UsersService {
     });
 
     await this.activityLogsService.log({
-      actor: await this.activityLogsService.buildActorById(
-        createdByAdminId,
-        Role.SYSTEM_ADMIN,
-      ),
+      actor: await this.activityLogsService.buildActorById(createdByAdminId, Role.SYSTEM_ADMIN),
       buildingId: newAdmin.buildingId,
       category: ActivityCategory.USER,
       status: ActivityStatus.INFO,
@@ -104,14 +97,9 @@ export class UsersService {
   }
 
   // Khởi tạo tài khoản Cư Dân trực tiếp do Ban Quản Lý Tòa Nhà thực hiện
-  async createResidentByAdmin(
-    dto: CreateResidentDto,
-    creator: AuthenticatedUser,
-  ): Promise<User> {
+  async createResidentByAdmin(dto: CreateResidentDto, creator: AuthenticatedUser): Promise<User> {
     if (!creator.buildingId) {
-      throw new BadRequestException(
-        'Tài khoản quản trị chưa được liên kết với Tòa nhà nào',
-      );
+      throw new BadRequestException('Tài khoản quản trị chưa được liên kết với Tòa nhà nào');
     }
 
     const existingEmail = await this.findByEmail(dto.email);
@@ -238,9 +226,7 @@ export class UsersService {
       email: user.email,
       phone: user.phone,
       role: user.role,
-      buildingId: populatedBuilding?._id
-        ? populatedBuilding._id.toString()
-        : undefined,
+      buildingId: populatedBuilding?._id ? populatedBuilding._id.toString() : undefined,
       buildingName: populatedBuilding?.name,
       apartment: user.apartment,
       approvalStatus: user.approvalStatus,
@@ -352,10 +338,7 @@ export class UsersService {
     if (updated) {
       const approved = status === ApprovalStatus.ACTIVE;
       await this.activityLogsService.log({
-        actor: await this.activityLogsService.buildActorById(
-          approvedBy,
-          Role.BUILDING_ADMIN,
-        ),
+        actor: await this.activityLogsService.buildActorById(approvedBy, Role.BUILDING_ADMIN),
         buildingId: updated.buildingId,
         category: ActivityCategory.USER,
         status: approved ? ActivityStatus.SUCCESS : ActivityStatus.WARNING,
@@ -371,18 +354,12 @@ export class UsersService {
   // Lấy danh sách người dùng theo phạm vi quyền hạn của người gọi
   async findAllScoped(creator: AuthenticatedUser): Promise<User[]> {
     if (creator.role === Role.SYSTEM_ADMIN) {
-      return this.userModel
-        .find()
-        .select('-password')
-        .sort({ createdAt: -1 })
-        .exec();
+      return this.userModel.find().select('-password').sort({ createdAt: -1 }).exec();
     }
 
     if (creator.role === Role.BUILDING_ADMIN) {
       if (!creator.buildingId) {
-        throw new BadRequestException(
-          'Tài khoản quản trị chưa được liên kết với Tòa nhà nào',
-        );
+        throw new BadRequestException('Tài khoản quản trị chưa được liên kết với Tòa nhà nào');
       }
       return this.userModel
         .find({
@@ -394,16 +371,11 @@ export class UsersService {
         .exec();
     }
 
-    throw new ForbiddenException(
-      'Không có quyền truy cập danh sách người dùng',
-    );
+    throw new ForbiddenException('Không có quyền truy cập danh sách người dùng');
   }
 
   // Lấy chi tiết thông tin một người dùng theo phạm vi phân quyền
-  async findOneScoped(
-    id: string,
-    creator: AuthenticatedUser,
-  ): Promise<User | null> {
+  async findOneScoped(id: string, creator: AuthenticatedUser): Promise<User | null> {
     const user = await this.userModel.findById(id).select('-password').exec();
     if (!user) {
       throw new NotFoundException('Không tìm thấy thông tin người dùng');
@@ -414,14 +386,11 @@ export class UsersService {
     }
 
     if (creator.role === Role.BUILDING_ADMIN) {
-      const isSameBuilding =
-        user.buildingId?.toString() === creator.buildingId?.toString();
+      const isSameBuilding = user.buildingId?.toString() === creator.buildingId?.toString();
       const isResident = user.role === Role.RESIDENT;
 
       if (!isResident || !isSameBuilding) {
-        throw new ForbiddenException(
-          'Bạn không có quyền xem thông tin người dùng này',
-        );
+        throw new ForbiddenException('Bạn không có quyền xem thông tin người dùng này');
       }
       return user;
     }
@@ -434,7 +403,10 @@ export class UsersService {
     users: User[],
   ): Promise<(Record<string, unknown> & { packageCount: number })[]> {
     const rows = await this.packageModel
-      .aggregate<{ _id: Types.ObjectId; count: number }>([
+      .aggregate<{
+        _id: Types.ObjectId;
+        count: number;
+      }>([
         { $match: { residentId: { $in: users.map((u) => u._id) } } },
         { $group: { _id: '$residentId', count: { $sum: 1 } } },
       ])
@@ -463,10 +435,7 @@ export class UsersService {
     }
 
     if (admin.role === Role.BUILDING_ADMIN) {
-      if (
-        target.role !== Role.RESIDENT ||
-        !canAccessBuilding(admin, target.buildingId)
-      ) {
+      if (target.role !== Role.RESIDENT || !canAccessBuilding(admin, target.buildingId)) {
         throw new ForbiddenException(
           'Bạn chỉ có quyền sửa tài khoản cư dân thuộc tòa nhà do mình quản lý',
         );
@@ -495,14 +464,9 @@ export class UsersService {
     }
 
     let statusChange: 'SUSPEND' | 'REACTIVATE' | undefined;
-    if (
-      dto.approvalStatus !== undefined &&
-      dto.approvalStatus !== target.approvalStatus
-    ) {
+    if (dto.approvalStatus !== undefined && dto.approvalStatus !== target.approvalStatus) {
       if (String(target._id) === admin.userId) {
-        throw new BadRequestException(
-          'Không thể tự khóa hoặc mở khóa tài khoản của chính mình',
-        );
+        throw new BadRequestException('Không thể tự khóa hoặc mở khóa tài khoản của chính mình');
       }
       if (
         target.approvalStatus !== ApprovalStatus.ACTIVE &&
@@ -555,10 +519,7 @@ export class UsersService {
       actor: await this.activityLogsService.buildActor(admin),
       buildingId: target.buildingId,
       category: ActivityCategory.USER,
-      status:
-        statusChange === 'SUSPEND'
-          ? ActivityStatus.WARNING
-          : ActivityStatus.INFO,
+      status: statusChange === 'SUSPEND' ? ActivityStatus.WARNING : ActivityStatus.INFO,
       title:
         statusChange === 'SUSPEND'
           ? 'Khóa tài khoản người dùng'
@@ -577,13 +538,11 @@ export class UsersService {
     const userId = String(user._id);
     const buildingId = user.buildingId ? String(user.buildingId) : undefined;
 
-    this.notificationsService
-      .notifyAccountSuspended(userId, buildingId)
-      .catch((err) => {
-        this.logger.error(
-          `Lỗi khi phát thông báo khóa tài khoản: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
+    this.notificationsService.notifyAccountSuspended(userId, buildingId).catch((err) => {
+      this.logger.error(
+        `Lỗi khi phát thông báo khóa tài khoản: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
 
     if (!user.email || !buildingId) return;
     this.buildingsService
@@ -603,10 +562,7 @@ export class UsersService {
   }
 
   // Ghi nhật ký xóa tài khoản người dùng ở mức cảnh báo vì thao tác không thể hoàn tác
-  private async logUserDeleted(
-    user: User,
-    creator: AuthenticatedUser,
-  ): Promise<void> {
+  private async logUserDeleted(user: User, creator: AuthenticatedUser): Promise<void> {
     await this.activityLogsService.log({
       actor: await this.activityLogsService.buildActor(creator),
       buildingId: user.buildingId,
@@ -619,10 +575,7 @@ export class UsersService {
   }
 
   // Xóa tài khoản người dùng theo phạm vi phân quyền
-  async removeScoped(
-    id: string,
-    creator: AuthenticatedUser,
-  ): Promise<User | null> {
+  async removeScoped(id: string, creator: AuthenticatedUser): Promise<User | null> {
     const user = await this.userModel.findById(id).exec();
     if (!user) {
       throw new NotFoundException('Không tìm thấy tài khoản người dùng để xóa');
@@ -635,8 +588,7 @@ export class UsersService {
     }
 
     if (creator.role === Role.BUILDING_ADMIN) {
-      const isSameBuilding =
-        user.buildingId?.toString() === creator.buildingId?.toString();
+      const isSameBuilding = user.buildingId?.toString() === creator.buildingId?.toString();
       const isResident = user.role === Role.RESIDENT;
 
       if (!isResident || !isSameBuilding) {
@@ -653,12 +605,26 @@ export class UsersService {
     throw new ForbiddenException('Không có quyền thực hiện thao tác này');
   }
 
+  // Người dùng đang hoạt động tự cập nhật họ tên của mình rồi trả về hồ sơ mới; số điện thoại đổi qua xác thực OTP riêng
+  async updateProfile(userId: string, dto: UpdateProfileDto): Promise<UserProfileResponseDto> {
+    if (dto.name === undefined) {
+      throw new BadRequestException('Không có thông tin nào để cập nhật');
+    }
+
+    const user = await this.userModel.findById(userId).select('approvalStatus').lean().exec();
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy tài khoản người dùng');
+    }
+    assertActiveAccount(user.approvalStatus);
+
+    await this.userModel.updateOne({ _id: userId }, { $set: { name: dto.name.trim() } }).exec();
+
+    return this.getProfile(userId);
+  }
+
   // Thực hiện đổi mật khẩu cá nhân cho người dùng đang đăng nhập và hủy các phiên refresh token cũ
   async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
-    const user = await this.userModel
-      .findById(userId)
-      .select('+password')
-      .exec();
+    const user = await this.userModel.findById(userId).select('+password').exec();
     if (!user) {
       throw new NotFoundException('Không tìm thấy tài khoản người dùng');
     }
@@ -669,9 +635,7 @@ export class UsersService {
     }
 
     if (dto.newPassword === dto.currentPassword) {
-      throw new BadRequestException(
-        'Mật khẩu mới không được trùng với mật khẩu cũ',
-      );
+      throw new BadRequestException('Mật khẩu mới không được trùng với mật khẩu cũ');
     }
 
     const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
@@ -699,17 +663,12 @@ export class UsersService {
 
   // Xóa push token của thiết bị để máy đã đăng xuất không còn nhận thông báo
   async clearPushToken(userId: string): Promise<void> {
-    await this.userModel
-      .updateOne({ _id: userId }, { $unset: { devicePushToken: 1 } })
-      .exec();
+    await this.userModel.updateOne({ _id: userId }, { $unset: { devicePushToken: 1 } }).exec();
   }
 
   // Tìm kiếm thông tin người dùng bao gồm cả mã băm Refresh Token để xác thực
   async findByIdWithRefreshToken(id: string): Promise<User | null> {
-    return this.userModel
-      .findById(id)
-      .select('+refreshTokenHash -password')
-      .exec();
+    return this.userModel.findById(id).select('+refreshTokenHash -password').exec();
   }
 
   // Cập nhật ảnh đại diện người dùng lên máy chủ lưu trữ và dọn dẹp ảnh cũ
@@ -755,11 +714,7 @@ export class UsersService {
   }
 
   // Lưu mã băm OTP đặt lại mật khẩu và thời gian hết hạn vào cơ sở dữ liệu
-  async setResetPasswordOtp(
-    userId: string,
-    hashedOtp: string,
-    expires: Date,
-  ): Promise<void> {
+  async setResetPasswordOtp(userId: string, hashedOtp: string, expires: Date): Promise<void> {
     await this.userModel
       .findByIdAndUpdate(userId, {
         resetPasswordOtp: hashedOtp,
@@ -770,10 +725,7 @@ export class UsersService {
   }
 
   // Cập nhật mật khẩu mới và dọn dẹp các trường OTP đặt lại mật khẩu
-  async updatePasswordAndClearResetOtp(
-    userId: string,
-    newPasswordHash: string,
-  ): Promise<void> {
+  async updatePasswordAndClearResetOtp(userId: string, newPasswordHash: string): Promise<void> {
     await this.userModel
       .findByIdAndUpdate(userId, {
         password: newPasswordHash,
@@ -787,10 +739,7 @@ export class UsersService {
   }
 
   // Lưu khóa bí mật 2FA tạm thời đã mã hóa vào cơ sở dữ liệu khi bắt đầu tạo mới
-  async saveTempTwoFactorSecret(
-    userId: string,
-    encryptedTempSecret: string,
-  ): Promise<void> {
+  async saveTempTwoFactorSecret(userId: string, encryptedTempSecret: string): Promise<void> {
     await this.userModel
       .findByIdAndUpdate(userId, {
         'twoFactorAuth.tempSecret': encryptedTempSecret,
@@ -855,10 +804,7 @@ export class UsersService {
   }
 
   // Cập nhật danh sách mã khôi phục sau khi người dùng đã tiêu thụ một mã khôi phục
-  async consumeRecoveryCode(
-    userId: string,
-    remainingRecoveryCodes: string[],
-  ): Promise<void> {
+  async consumeRecoveryCode(userId: string, remainingRecoveryCodes: string[]): Promise<void> {
     await this.userModel
       .findByIdAndUpdate(userId, {
         'twoFactorAuth.recoveryCodes': remainingRecoveryCodes,
@@ -867,10 +813,7 @@ export class UsersService {
   }
 
   // Đăng ký hoặc cập nhật mã push token nhận thông báo trên thiết bị di động
-  async updatePushToken(
-    userId: string,
-    pushToken: string,
-  ): Promise<User | null> {
+  async updatePushToken(userId: string, pushToken: string): Promise<User | null> {
     return this.userModel
       .findByIdAndUpdate(userId, { devicePushToken: pushToken }, { new: true })
       .select('-password')
@@ -878,11 +821,7 @@ export class UsersService {
   }
 
   // Đăng ký nhận diện khuôn mặt Face ID cho cư dân thông qua dịch vụ AI
-  async enrollFace(
-    userId: string,
-    body?: EnrollFaceDto,
-    file?: Express.Multer.File,
-  ) {
+  async enrollFace(userId: string, body?: EnrollFaceDto, file?: Express.Multer.File) {
     const imageBuffers: Buffer[] = [];
     const rawImage =
       body?.faceImageBase64 ||

@@ -8,6 +8,7 @@ import {
   Body,
   Query,
   Request,
+  HttpCode,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -17,8 +18,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service';
+import { UserPhoneChangeService } from './user-phone-change.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -31,6 +34,9 @@ import {
   RejectResidentDto,
   UserProfileResponseDto,
   ChangePasswordDto,
+  UpdateProfileDto,
+  RequestPhoneChangeDto,
+  VerifyPhoneChangeDto,
   UpdatePushTokenDto,
   EnrollFaceDto,
   UpdateUserByAdminDto,
@@ -50,18 +56,27 @@ import {
   ApiUploadAvatarDoc,
   ApiRemoveAvatarDoc,
   ApiChangePasswordDoc,
+  ApiUpdateProfileDoc,
+  ApiRequestPhoneChangeOtpDoc,
+  ApiVerifyPhoneChangeDoc,
   ApiUpdatePushTokenDoc,
   ApiEnrollFaceDoc,
   ApiRemoveFaceDoc,
   ApiUpdateUserByAdminDoc,
 } from './swagger/user.swagger';
 
+// Giới hạn theo IP cho các route OTP đổi số điện thoại để chống gửi SMS hàng loạt và dò mã
+const PHONE_CHANGE_THROTTLE = { default: { ttl: 60_000, limit: 5 } };
+
 @ApiTags('Users')
 @ApiBearerAuth('JWT-auth')
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly phoneChangeService: UserPhoneChangeService,
+  ) {}
 
   // Khởi tạo tài khoản Ban Quản Lý Tòa Nhà mới (Chỉ dành riêng cho System Admin)
   @Post('building-admin')
@@ -93,6 +108,45 @@ export class UsersController {
     @Request() req: { user: AuthenticatedUser },
   ): Promise<UserProfileResponseDto> {
     return this.usersService.getProfile(req.user.userId);
+  }
+
+  // Tự cập nhật tên và số điện thoại của người dùng đang đăng nhập
+  @Patch('me')
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN, Role.SHIPPER, Role.RESIDENT)
+  @ApiUpdateProfileDoc()
+  async updateProfile(
+    @Request() req: { user: AuthenticatedUser },
+    @Body() dto: UpdateProfileDto,
+  ): Promise<UserProfileResponseDto> {
+    return this.usersService.updateProfile(req.user.userId, dto);
+  }
+
+  // Gửi mã OTP SMS tới số điện thoại mới mà người dùng muốn đổi sang
+  @Post('me/phone/otp')
+  @UseGuards(ThrottlerGuard)
+  @Throttle(PHONE_CHANGE_THROTTLE)
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN, Role.SHIPPER, Role.RESIDENT)
+  @ApiRequestPhoneChangeOtpDoc()
+  async requestPhoneChangeOtp(
+    @Request() req: { user: AuthenticatedUser },
+    @Body() dto: RequestPhoneChangeDto,
+  ) {
+    return this.phoneChangeService.requestOtp(req.user.userId, dto);
+  }
+
+  // Xác nhận mã OTP để lưu số điện thoại mới vào tài khoản
+  @Post('me/phone/verify')
+  @UseGuards(ThrottlerGuard)
+  @Throttle(PHONE_CHANGE_THROTTLE)
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN, Role.SHIPPER, Role.RESIDENT)
+  @ApiVerifyPhoneChangeDoc()
+  async verifyPhoneChange(
+    @Request() req: { user: AuthenticatedUser },
+    @Body() dto: VerifyPhoneChangeDto,
+  ): Promise<UserProfileResponseDto> {
+    return this.phoneChangeService.verifyOtp(req.user.userId, dto);
   }
 
   // Đổi mật khẩu tài khoản cá nhân của người dùng đang đăng nhập

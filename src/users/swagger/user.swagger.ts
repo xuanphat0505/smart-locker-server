@@ -320,6 +320,82 @@ export function ApiChangePasswordDoc() {
   );
 }
 
+// Tài liệu Swagger cho endpoint người dùng tự cập nhật hồ sơ cá nhân
+export function ApiUpdateProfileDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Cập nhật hồ sơ cá nhân',
+      description:
+        'Tài khoản đang hoạt động tự sửa họ tên. Số điện thoại đổi qua OTP SMS, email, vai trò, căn hộ và trạng thái không thể sửa tại đây',
+    }),
+    ApiResponse({
+      status: 200,
+      description: 'Cập nhật thành công, trả về hồ sơ mới nhất',
+    }),
+    ApiResponse({
+      status: 400,
+      description: 'Dữ liệu không hợp lệ hoặc không có trường nào để cập nhật',
+    }),
+    ApiResponse({
+      status: 401,
+      description: 'Chưa đăng nhập hoặc JWT Token không hợp lệ',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Tài khoản chưa được duyệt hoặc đang bị khóa',
+    }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint gửi OTP SMS xác nhận đổi số điện thoại
+export function ApiRequestPhoneChangeOtpDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Gửi OTP đổi số điện thoại',
+      description:
+        'Gửi mã 6 số qua SMS tới số mới, hiệu lực 3 phút, gửi lại tối thiểu 60 giây và tối đa 5 lần mỗi giờ',
+    }),
+    ApiResponse({ status: 200, description: 'Đã gửi mã OTP' }),
+    ApiResponse({
+      status: 400,
+      description: 'Số mới trùng số cũ hoặc gửi lại quá nhanh, quá nhiều',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Tài khoản chưa được duyệt hoặc đang bị khóa',
+    }),
+    ApiResponse({
+      status: 409,
+      description: 'Số điện thoại đã được tài khoản khác sử dụng',
+    }),
+    ApiResponse({ status: 502, description: 'Cổng SMS không phản hồi' }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint xác nhận OTP để lưu số điện thoại mới
+export function ApiVerifyPhoneChangeDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Xác nhận OTP đổi số điện thoại',
+      description:
+        'Kiểm tra mã OTP gửi tới số mới (tối đa 5 lần sai) rồi lưu số mới vào tài khoản, trả về hồ sơ mới nhất',
+    }),
+    ApiResponse({ status: 200, description: 'Đổi số điện thoại thành công' }),
+    ApiResponse({
+      status: 400,
+      description: 'OTP sai, hết hạn hoặc chưa có yêu cầu đổi sang số này',
+    }),
+    ApiResponse({
+      status: 403,
+      description: 'Tài khoản chưa được duyệt hoặc đang bị khóa',
+    }),
+    ApiResponse({
+      status: 409,
+      description: 'Số điện thoại đã được tài khoản khác sử dụng',
+    }),
+  );
+}
+
 // Tài liệu Swagger cho endpoint cập nhật mã push token thiết bị di động
 export function ApiUpdatePushTokenDoc() {
   return applyDecorators(
