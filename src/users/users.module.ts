@@ -12,6 +12,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { UploadModule } from '../upload/upload.module';
 import { AiModule } from '../ai/ai.module';
 import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
+import { SmsModule } from '../sms/sms.module';
+import { UserPhoneChangeService } from './user-phone-change.service';
 
 @Module({
   imports: [
@@ -26,9 +28,10 @@ import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
     UploadModule,
     AiModule,
     ActivityLogsModule,
+    SmsModule,
   ],
   controllers: [UsersController],
-  providers: [UsersService],
+  providers: [UsersService, UserPhoneChangeService],
   exports: [UsersService],
 })
 export class UsersModule {}

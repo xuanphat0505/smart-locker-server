@@ -41,7 +41,9 @@ export class SmsService {
   // Gửi một tin nhắn tới số điện thoại đã ở dạng quốc tế; ném lỗi 502 nếu cổng gửi không phản hồi hoặc từ chối
   async send(phoneE164: string, text: string): Promise<void> {
     if (this.provider === 'console') {
-      this.logger.log(`[SMS_CONSOLE] Tới ${phoneE164}: ${text}`);
+      // Nội dung chứa mã OTP nên chỉ ghi log khi bật chế độ thử nghiệm
+      const shownText = this.devMode ? text : '(đã ẩn, bật SMS_DEV_MODE để xem)';
+      this.logger.log(`[SMS_CONSOLE] Tới ${phoneE164}: ${shownText}`);
       return;
     }
 
