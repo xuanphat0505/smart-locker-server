@@ -3,6 +3,13 @@ import { PricingTierKey } from './storage-pricing.util';
 
 export type InvoiceStatus = 'UNPAID' | 'PARTIAL' | 'PAID';
 
+// Thông tin hóa đơn điện tử trả cho cư dân, không kèm mã tham chiếu nội bộ và lỗi hệ thống
+export interface InvoiceEInvoice {
+  status: 'PROCESSING' | 'EMAILED' | 'FAILED';
+  invoiceNumber?: string;
+  pdfUrl?: string;
+}
+
 // Thông tin kiện hàng làm đầu vào, liveTotalFee chỉ có nghĩa với kiện đang lưu kho
 export interface InvoicePackageInput {
   packageId: string;
@@ -29,6 +36,7 @@ export interface InvoicePaymentInput {
   description?: string;
   expiresAt?: Date;
   sepayTransactionId?: string;
+  eInvoice?: InvoiceEInvoice;
 }
 
 export interface InvoicePayment {
@@ -37,6 +45,7 @@ export interface InvoicePayment {
   paidAt?: Date;
   paymentType: PaymentType;
   status: 'PAID' | 'RECEIVED_PENDING';
+  eInvoice?: InvoiceEInvoice;
 }
 
 export interface PendingPaymentInfo {
@@ -69,6 +78,7 @@ export interface SubscriptionReceipt {
   amount: number;
   paidAt?: Date;
   sepayTransactionId?: string;
+  eInvoice?: InvoiceEInvoice;
 }
 
 export interface BuildInvoicesResult {
@@ -104,6 +114,7 @@ function buildInvoicePayments(payments: InvoicePaymentInput[]): InvoicePayment[]
         paidAt: p.paidAt,
         paymentType: p.paymentType,
         status: 'PAID',
+        eInvoice: p.eInvoice,
       });
     } else if (p.status === PaymentStatus.PENDING && p.receivedAmount > 0) {
       lines.push({
@@ -190,6 +201,7 @@ export function buildInvoices(
       amount: p.amount,
       paidAt: p.paidAt,
       sepayTransactionId: p.sepayTransactionId,
+      eInvoice: p.eInvoice,
     }))
     .sort((a, b) => (b.paidAt?.getTime() ?? 0) - (a.paidAt?.getTime() ?? 0));
 

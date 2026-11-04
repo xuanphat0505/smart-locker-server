@@ -844,6 +844,13 @@ export class PaymentsService {
       description: p.description,
       expiresAt: p.expiresAt,
       sepayTransactionId: p.sepayTransactionId,
+      eInvoice: p.eInvoice
+        ? {
+            status: p.eInvoice.status,
+            invoiceNumber: p.eInvoice.invoiceNumber,
+            pdfUrl: p.eInvoice.pdfUrl,
+          }
+        : undefined,
     }));
 
     const { invoices, subscriptionReceipts } = buildInvoices(packageInputs, paymentInputs);
