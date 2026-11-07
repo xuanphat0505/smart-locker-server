@@ -27,6 +27,7 @@ import {
   VerifyShipperOtpDto,
   VerifyFirebaseTokenDto,
 } from './dto';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { PackageStatus } from './enums';
 import { BoxSize, BoxStatus, DoorStatus, LockerAction } from '../lockers/enums';
 import { Role } from '../auth/enums/role.enum';
@@ -605,22 +606,52 @@ export class PackagesService {
     }
   }
 
-  // Lấy danh sách các bưu kiện của cư dân đang đăng nhập
-  async getMyPackages(residentId: string) {
+  // Lấy một trang bưu kiện của cư dân kèm số lượng theo trạng thái trên toàn bộ danh sách
+  async getMyPackages(residentId: string, query: PaginationQueryDto) {
     if (!Types.ObjectId.isValid(residentId)) {
       throw new BadRequestException('Mã cư dân không hợp lệ');
     }
 
-    const packages = await this.packageModel
-      .find({
-        residentId: new Types.ObjectId(residentId),
-        status: {
-          $nin: [PackageStatus.PENDING_DEPOSIT, PackageStatus.DEPOSIT_CANCELLED],
-        },
-      })
-      .sort({ createdAt: -1 })
-      .populate('lockerId', 'name code locationDescription');
+    const filter = {
+      residentId: new Types.ObjectId(residentId),
+      status: {
+        $nin: [PackageStatus.PENDING_DEPOSIT, PackageStatus.DEPOSIT_CANCELLED],
+      },
+    };
 
+    const { page, limit } = query;
+    const [packages, statusCounts] = await Promise.all([
+      this.packageModel
+        .find(filter)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('lockerId', 'name code locationDescription'),
+      this.packageModel.aggregate<{ _id: PackageStatus; count: number }>([
+        { $match: filter },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const countOf = (status: PackageStatus) =>
+      statusCounts.find((c) => c._id === status)?.count ?? 0;
+    const total = statusCounts.reduce((sum, c) => sum + c.count, 0);
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data: this.mapMyPackages(packages),
+      counts: {
+        total,
+        ready: countOf(PackageStatus.WAITING_FOR_PICKUP),
+        overdue: countOf(PackageStatus.OVERDUE),
+        delivered: countOf(PackageStatus.PICKED_UP),
+      },
+      pagination: { total, page, limit, totalPages, hasNext: page < totalPages },
+    };
+  }
+
+  // Chuẩn hóa bưu kiện đã populate thành dữ liệu trả về cho app cư dân
+  private mapMyPackages(packages: Package[]) {
     return packages.map((pkg) => {
       const locker = pkg.lockerId as unknown as {
         name?: string;

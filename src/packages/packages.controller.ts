@@ -26,6 +26,7 @@ import {
   VerifyFirebaseTokenDto,
 } from './dto';
 import { QueryAdminPackagesDto, ReturnPackageDto } from './dto/admin-package.dto';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Throttle } from '@nestjs/throttler';
@@ -160,8 +161,11 @@ export class PackagesController {
   @Roles(Role.RESIDENT)
   @ApiBearerAuth('JWT-auth')
   @ApiGetMyPackagesDoc()
-  async getMyPackages(@Request() req: { user: AuthenticatedUser }) {
-    return this.packagesService.getMyPackages(req.user.userId);
+  async getMyPackages(
+    @Request() req: { user: AuthenticatedUser },
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.packagesService.getMyPackages(req.user.userId, query);
   }
 
   // Tài xế tra cứu kết quả lượt gửi hàng bằng mã xác nhận nhận được lúc mở tủ, không cần tài khoản
