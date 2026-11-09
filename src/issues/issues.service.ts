@@ -354,6 +354,21 @@ export class IssuesService {
       );
     }
 
+    // Phiếu đã leo thang được Super Admin xử lý xong thì báo lại Ban Quản Lý của tòa, bỏ qua người báo đã nhận thông báo ở trên
+    if (dto.status === IssueStatus.RESOLVED && issue.status === IssueStatus.ESCALATED) {
+      const reporterId = String(issue.reporter?.userId);
+      const buildingAdmins = (
+        await this.findActiveUserIds(Role.BUILDING_ADMIN, issue.buildingId)
+      ).filter((id) => String(id) !== reporterId);
+      await this.notifyUsers(
+        buildingAdmins,
+        issue,
+        NotificationType.ISSUE_RESOLVED,
+        `Phiếu ${issue.ticketCode} đã được Super Admin xử lý`,
+        note,
+      );
+    }
+
     await this.activityLogsService.log({
       actor,
       buildingId: issue.buildingId,
