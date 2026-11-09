@@ -4,6 +4,7 @@ import {
   Post,
   Patch,
   Delete,
+  ForbiddenException,
   Param,
   Body,
   Query,
@@ -18,6 +19,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/auth.interface';
+import { canAccessBuilding } from '../common/utils/building-scope.util';
 import {
   ApiGetMyNotificationsDoc,
   ApiGetUnreadCountDoc,
@@ -55,10 +57,7 @@ export class NotificationsController {
   // Đánh dấu một thông báo cụ thể là đã đọc
   @Patch(':id/read')
   @ApiMarkAsReadDoc()
-  async markAsRead(
-    @Request() req: { user: AuthenticatedUser },
-    @Param('id') id: string,
-  ) {
+  async markAsRead(@Request() req: { user: AuthenticatedUser }, @Param('id') id: string) {
     return this.notificationsService.markAsRead(req.user.userId, id);
   }
 
@@ -72,10 +71,7 @@ export class NotificationsController {
   // Xóa một thông báo khỏi hộp thư
   @Delete(':id')
   @ApiDeleteNotificationDoc()
-  async deleteNotification(
-    @Request() req: { user: AuthenticatedUser },
-    @Param('id') id: string,
-  ) {
+  async deleteNotification(@Request() req: { user: AuthenticatedUser }, @Param('id') id: string) {
     return this.notificationsService.deleteNotification(req.user.userId, id);
   }
 
@@ -87,6 +83,9 @@ export class NotificationsController {
     @Request() req: { user: AuthenticatedUser },
     @Body() dto: BroadcastNotificationDto,
   ) {
+    if (!canAccessBuilding(req.user, dto.buildingId)) {
+      throw new ForbiddenException('Bạn không có quyền gửi thông báo cho tòa nhà này');
+    }
     return this.notificationsService.broadcastToBuilding(req.user.userId, dto);
   }
 }
