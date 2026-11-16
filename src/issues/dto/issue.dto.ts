@@ -87,6 +87,14 @@ export class QueryIssuesDto extends PaginationQueryDto {
   search?: string;
 }
 
+// Truy vấn danh sách phiếu do chính người gọi đã gửi
+export class QueryMyIssuesDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ enum: IssueStatus })
+  @IsOptional()
+  @IsEnum(IssueStatus, { message: 'Trạng thái không hợp lệ' })
+  status?: IssueStatus;
+}
+
 // Cập nhật trạng thái xử lý phiếu; chuyển sang ESCALATED đi qua route leo thang riêng
 export class UpdateIssueStatusDto {
   @ApiProperty({

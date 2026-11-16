@@ -53,6 +53,32 @@ export function ApiListIssuesDoc() {
   );
 }
 
+// Tài liệu Swagger cho endpoint liệt kê phiếu do chính người gọi gửi
+export function ApiListMyIssuesDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Danh sách phiếu tôi đã gửi',
+      description:
+        'Chỉ trả về phiếu do chính người gọi tạo, mới nhất trước, có phân trang và lọc theo trạng thái, trả về { data, total, page, limit }. Không kèm dòng thời gian',
+    }),
+    ApiResponse({ status: 200, description: 'Lấy danh sách thành công' }),
+  );
+}
+
+// Tài liệu Swagger cho endpoint xem chi tiết phiếu do chính người gọi gửi
+export function ApiGetMyIssueDoc() {
+  return applyDecorators(
+    ApiOperation({
+      summary: 'Chi tiết phiếu tôi đã gửi',
+      description:
+        'Kèm ảnh đính kèm và dòng thời gian xử lý. Phiếu của người khác trả về 404',
+    }),
+    ApiParam({ name: 'id', description: 'Mã phiếu' }),
+    ApiResponse({ status: 200, description: 'Lấy chi tiết thành công' }),
+    ApiResponse({ status: 404, description: 'Không tìm thấy phiếu' }),
+  );
+}
+
 // Tài liệu Swagger cho endpoint xem chi tiết phiếu
 export function ApiGetIssueDoc() {
   return applyDecorators(
