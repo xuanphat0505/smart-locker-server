@@ -18,17 +18,17 @@ import {
   CreateIssueDto,
   EscalateIssueDto,
   QueryIssuesDto,
+  QueryMyIssuesDto,
   UpdateIssueStatusDto,
 } from './dto/issue.dto';
-import {
-  ISSUE_MAX_ATTACHMENTS,
-  ISSUE_MAX_ATTACHMENT_BYTES,
-} from './enums/issue.enums';
+import { ISSUE_MAX_ATTACHMENTS, ISSUE_MAX_ATTACHMENT_BYTES } from './enums/issue.enums';
 import {
   ApiCreateIssueDoc,
   ApiEscalateIssueDoc,
   ApiGetIssueDoc,
+  ApiGetMyIssueDoc,
   ApiListIssuesDoc,
+  ApiListMyIssuesDoc,
   ApiUpdateIssueStatusDoc,
 } from './swagger/issue.swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -61,14 +61,27 @@ export class IssuesController {
     return this.issuesService.create(req.user, dto, files ?? []);
   }
 
+  // Người gửi xem lại danh sách phiếu của chính mình; khai báo trước route :id để không bị nuốt
+  @Get('mine')
+  @Roles(Role.RESIDENT, Role.SHIPPER, Role.BUILDING_ADMIN)
+  @ApiListMyIssuesDoc()
+  async findMine(@Query() query: QueryMyIssuesDto, @Request() req: { user: AuthenticatedUser }) {
+    return this.issuesService.findMine(req.user, query);
+  }
+
+  // Người gửi xem chi tiết và tiến trình xử lý của một phiếu do mình tạo
+  @Get('mine/:id')
+  @Roles(Role.RESIDENT, Role.SHIPPER, Role.BUILDING_ADMIN)
+  @ApiGetMyIssueDoc()
+  async findMineOne(@Param('id') id: string, @Request() req: { user: AuthenticatedUser }) {
+    return this.issuesService.findMineOne(id, req.user);
+  }
+
   // Quản trị viên xem danh sách phiếu theo phạm vi tòa nhà
   @Get()
   @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
   @ApiListIssuesDoc()
-  async findAll(
-    @Query() query: QueryIssuesDto,
-    @Request() req: { user: AuthenticatedUser },
-  ) {
+  async findAll(@Query() query: QueryIssuesDto, @Request() req: { user: AuthenticatedUser }) {
     return this.issuesService.findAll(req.user, query);
   }
 
@@ -76,10 +89,7 @@ export class IssuesController {
   @Get(':id')
   @Roles(Role.SYSTEM_ADMIN, Role.BUILDING_ADMIN)
   @ApiGetIssueDoc()
-  async findOne(
-    @Param('id') id: string,
-    @Request() req: { user: AuthenticatedUser },
-  ) {
+  async findOne(@Param('id') id: string, @Request() req: { user: AuthenticatedUser }) {
     return this.issuesService.findOne(id, req.user);
   }
 

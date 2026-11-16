@@ -31,6 +31,7 @@ import {
   CreateIssueDto,
   EscalateIssueDto,
   QueryIssuesDto,
+  QueryMyIssuesDto,
   UpdateIssueStatusDto,
 } from './dto/issue.dto';
 import {
@@ -268,6 +269,50 @@ export class IssuesService {
     ]);
 
     return { data, total, page, limit };
+  }
+
+  // Liệt kê phiếu do chính người gọi gửi, mới nhất trước, không kèm dòng thời gian để danh sách nhẹ
+  async findMine(
+    user: AuthenticatedUser,
+    query: QueryMyIssuesDto,
+  ): Promise<PaginatedResult<Issue>> {
+    const filter: QueryFilter<Issue> = {
+      'reporter.userId': new Types.ObjectId(user.userId),
+    };
+    if (query.status) filter.status = query.status;
+
+    const { page, limit } = query;
+    const [data, total] = await Promise.all([
+      this.issueModel
+        .find(filter)
+        .select('-timeline -reporter')
+        .populate('lockerId', 'code name')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean<Issue[]>()
+        .exec(),
+      this.issueModel.countDocuments(filter).exec(),
+    ]);
+
+    return { data, total, page, limit };
+  }
+
+  // Lấy chi tiết một phiếu của chính người gọi; phiếu của người khác trả về không tìm thấy để không lộ sự tồn tại
+  async findMineOne(id: string, user: AuthenticatedUser) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Mã phiếu không hợp lệ');
+    }
+    const issue = await this.issueModel
+      .findOne({ _id: id, 'reporter.userId': new Types.ObjectId(user.userId) })
+      .select('-reporter')
+      .populate('lockerId', 'code name')
+      .lean<Issue>()
+      .exec();
+    if (!issue) {
+      throw new NotFoundException('Không tìm thấy phiếu báo lỗi');
+    }
+    return issue;
   }
 
   // Nạp phiếu và kiểm tra người gọi có thuộc phạm vi tòa nhà của phiếu hay không
