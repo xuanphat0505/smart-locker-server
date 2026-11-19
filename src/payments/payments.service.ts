@@ -34,7 +34,8 @@ import {
   lookupOrderInvoiceByPayCode,
   generateOrderCode,
   generateVietQrPayload,
-  isPaymentConfigured,
+  getSepayBankAccount,
+  isTransferToAccount,
   type ConfiguredBankAccount,
 } from './utils/payment-gateway.util';
 import {
@@ -65,6 +66,9 @@ import { Role } from '../auth/enums/role.enum';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
 import { canAccessBuilding, toIdString } from '../common/utils/building-scope.util';
 import { getErrorMessage, normalizeCode } from '../common/utils/text.util';
+
+// Trạng thái đơn hàng của cổng SePay PG khi tiền đã được thu thành công
+const PG_ORDER_CAPTURED_STATUS = 'CAPTURED';
 
 @Injectable()
 export class PaymentsService {
@@ -205,7 +209,7 @@ export class PaymentsService {
     bankAccount: ConfiguredBankAccount;
   }) {
     const { orderCode, amount, description, bankAccount } = params;
-    const bankName = bankAccount.bankName || 'MBBank';
+    const bankName = bankAccount.bankName ?? '';
 
     const qrCodeUrl = generateSepayQrUrl({
       bankName,
@@ -243,11 +247,9 @@ export class PaymentsService {
       throw new NotFoundException('Không tìm thấy bưu kiện');
     }
 
-    const building = pkg.buildingId as unknown as Building;
-    if (!isPaymentConfigured(building)) {
-      throw new BadRequestException(
-        'Ban Quản Lý tòa nhà chưa cấu hình thông tin tài khoản ngân hàng thụ hưởng',
-      );
+    const bankAccount = getSepayBankAccount();
+    if (!bankAccount) {
+      throw new BadRequestException('Hệ thống chưa cấu hình tài khoản ngân hàng thụ hưởng');
     }
 
     const feeInfo = await this.checkFee(dto.packageId);
@@ -325,7 +327,7 @@ export class PaymentsService {
       orderCode,
       amount: feeInfo.feeDue,
       description,
-      bankAccount: building.bankAccount,
+      bankAccount,
     });
 
     const payment = await this.paymentModel.create({
@@ -342,10 +344,10 @@ export class PaymentsService {
       amount: feeInfo.feeDue,
       extensionHours: 24,
       recipientAccount: {
-        bankBin: building.bankAccount.bankBin,
+        bankBin: bankAccount.bankBin,
         bankName,
-        accountNumber: building.bankAccount.accountNumber,
-        accountName: building.bankAccount.accountName,
+        accountNumber: bankAccount.accountNumber,
+        accountName: bankAccount.accountName,
       },
       status: PaymentStatus.PENDING,
       paymentUrl,
@@ -406,10 +408,9 @@ export class PaymentsService {
       throw new NotFoundException('Không tìm thấy thông tin tòa nhà');
     }
 
-    if (!isPaymentConfigured(building)) {
-      throw new BadRequestException(
-        'Ban Quản Lý tòa nhà chưa cấu hình thông tin tài khoản ngân hàng thụ hưởng',
-      );
+    const bankAccount = getSepayBankAccount();
+    if (!bankAccount) {
+      throw new BadRequestException('Hệ thống chưa cấu hình tài khoản ngân hàng thụ hưởng');
     }
 
     const subscriptionFee = building.pricingPolicy?.monthlySubscriptionFee ?? 30000;
@@ -472,7 +473,7 @@ export class PaymentsService {
       orderCode,
       amount: subscriptionFee,
       description,
-      bankAccount: building.bankAccount,
+      bankAccount,
     });
 
     const payment = await this.paymentModel.create({
@@ -484,10 +485,10 @@ export class PaymentsService {
       amount: subscriptionFee,
       extensionHours: 0,
       recipientAccount: {
-        bankBin: building.bankAccount.bankBin,
+        bankBin: bankAccount.bankBin,
         bankName,
-        accountNumber: building.bankAccount.accountNumber,
-        accountName: building.bankAccount.accountName,
+        accountNumber: bankAccount.accountNumber,
+        accountName: bankAccount.accountName,
       },
       status: PaymentStatus.PENDING,
       paymentUrl,
@@ -1031,6 +1032,27 @@ export class PaymentsService {
     let referenceCode: string | undefined;
     let sepayTransactionId: string | undefined;
 
+    if (isPgIpn && dto.order?.order_status !== PG_ORDER_CAPTURED_STATUS) {
+      this.logger.warn(
+        `[SEPAY_WEBHOOK] Bỏ qua IPN PG vì trạng thái đơn không phải ${PG_ORDER_CAPTURED_STATUS}: ${dto.order?.order_status}`,
+      );
+      return {
+        success: false,
+        message: 'Đơn hàng cổng thanh toán chưa ở trạng thái đã thanh toán',
+      };
+    }
+
+    // Giao dịch chuyển khoản ngân hàng phải vào đúng tài khoản thụ hưởng đã cấu hình
+    if (!isPgIpn) {
+      const bankAccount = getSepayBankAccount();
+      if (!bankAccount || !isTransferToAccount(dto, bankAccount)) {
+        this.logger.warn(
+          `[SEPAY_WEBHOOK] Bỏ qua giao dịch vào tài khoản không khớp cấu hình (accountNumber=${dto.accountNumber}, subAccount=${dto.subAccount})`,
+        );
+        return { success: false, message: 'Giao dịch không vào tài khoản thụ hưởng của hệ thống' };
+      }
+    }
+
     if (isPgIpn && dto.order) {
       orderCode = parseInt(String(dto.order.order_invoice_number), 10);
       transferAmount = parseFloat(String(dto.order.order_amount || 0));
@@ -1083,7 +1105,6 @@ export class PaymentsService {
       );
     }
     const receivedNow = Number.isFinite(transferAmount) ? Math.max(0, transferAmount) : 0;
-    const isGatewayConfirmed = isPgIpn;
 
     // Bước 1: ghi nhận khoản tiền vào đơn, bỏ qua nếu mã giao dịch này đã được tính trước đó
     const recorded = await this.paymentModel.findOneAndUpdate(
@@ -1128,8 +1149,8 @@ export class PaymentsService {
       };
     }
 
-    // Bước 2: chỉ chốt PAID khi đã đủ tiền; cổng thanh toán PG đã tự đảm bảo số tiền nên luôn được chốt
-    if (!isGatewayConfirmed && !isFullyPaid(recorded.amount, recorded.receivedAmount)) {
+    // Bước 2: chỉ chốt PAID khi tổng tiền đã nhận đủ, kể cả với IPN của cổng thanh toán PG
+    if (!isFullyPaid(recorded.amount, recorded.receivedAmount)) {
       this.logger.warn(
         `[SEPAY_WEBHOOK] Giao dịch #${orderCode} chưa đủ tiền: đã nhận ${recorded.receivedAmount}/${recorded.amount} VNĐ, giữ đơn ở trạng thái PENDING`,
       );
@@ -1150,7 +1171,7 @@ export class PaymentsService {
       {
         _id: recorded._id,
         status: PaymentStatus.PENDING,
-        ...(isGatewayConfirmed ? {} : { receivedAmount: { $gte: recorded.amount } }),
+        receivedAmount: { $gte: recorded.amount },
       },
       {
         $set: {

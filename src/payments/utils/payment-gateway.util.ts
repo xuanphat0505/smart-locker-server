@@ -227,20 +227,28 @@ export interface ConfiguredBankAccount {
   bankName?: string;
 }
 
-// Đối tượng có thể chứa tài khoản ngân hàng thụ hưởng, thường là tòa nhà
-interface HasBankAccount {
-  bankAccount?: {
-    bankBin?: string;
-    accountNumber?: string;
-    accountName?: string;
-    bankName?: string;
-  } | null;
+// Kiểm tra giao dịch webhook đã vào đúng tài khoản thụ hưởng, khớp theo số tài khoản hoặc tài khoản phụ (VA) mà SePay gửi về
+export function isTransferToAccount(
+  transfer: { accountNumber?: string; subAccount?: string },
+  bankAccount: ConfiguredBankAccount,
+): boolean {
+  const expected = bankAccount.accountNumber.toUpperCase();
+  return [transfer.accountNumber, transfer.subAccount].some(
+    (value) => value?.trim().toUpperCase() === expected,
+  );
 }
 
-// Kiểm tra tòa nhà đã có đủ bankBin, accountNumber và accountName; dùng kiểu khẳng định để các đoạn sau truy cập tài khoản mà không cần kiểm tra lại
-export function isPaymentConfigured<T extends HasBankAccount>(
-  building: T | null | undefined,
-): building is T & { bankAccount: ConfiguredBankAccount } {
-  const bank = building?.bankAccount;
-  return Boolean(bank?.bankBin && bank?.accountNumber && bank?.accountName);
+// Đọc tài khoản thụ hưởng cố định từ biến môi trường để luôn khớp với tài khoản đã liên kết trên SePay; trả về null nếu thiếu số tài khoản, mã BIN hoặc tên ngân hàng
+export function getSepayBankAccount(): ConfiguredBankAccount | null {
+  const accountNumber = process.env.SEPAY_ACCOUNT_NUMBER?.trim();
+  const bankBin = process.env.SEPAY_BANK_BIN?.trim();
+  const bankName = process.env.SEPAY_BANK_NAME?.trim();
+  if (!accountNumber || !bankBin || !bankName) return null;
+
+  return {
+    bankBin,
+    bankName,
+    accountNumber,
+    accountName: process.env.SEPAY_ACCOUNT_NAME?.trim() || '',
+  };
 }

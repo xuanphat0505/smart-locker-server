@@ -58,10 +58,64 @@ describe('PaymentsService.handleSepayWebhook (chuyển thiếu tiền)', () => {
     return { service, paymentModel, activityLogs, notifications };
   };
 
-  const webhook = (transferAmount: number, id = 1) => ({
+  const ACCOUNT_NUMBER = '96247DGC3L';
+  const envBackup = { ...process.env };
+
+  beforeAll(() => {
+    process.env.SEPAY_ACCOUNT_NUMBER = ACCOUNT_NUMBER;
+    process.env.SEPAY_BANK_BIN = '970418';
+    process.env.SEPAY_BANK_NAME = 'BIDV';
+    delete process.env.SEPAY_WEBHOOK_SECRET;
+    delete process.env.SEPAY_SECRET_KEY;
+    delete process.env.SECRET_KEY;
+  });
+
+  afterAll(() => {
+    process.env = envBackup;
+  });
+
+  const webhook = (transferAmount: number, id = 1, accountNumber = ACCOUNT_NUMBER) => ({
     id,
     transferAmount,
+    accountNumber,
     content: generateSepayTransferContent('LOCKER', orderCode),
+  });
+
+  const pgWebhook = (orderAmount: number, orderStatus = 'CAPTURED') => ({
+    notification_type: 'ORDER_PAID',
+    order: {
+      order_id: 'PAY1',
+      order_invoice_number: String(orderCode),
+      order_status: orderStatus,
+      order_amount: orderAmount,
+    },
+  });
+
+  it('giao dịch vào tài khoản không khớp cấu hình thì bị từ chối, không ghi nhận', async () => {
+    const { service, paymentModel } = make(makePayment());
+
+    const result = await service.handleSepayWebhook(webhook(15000, 1, '0000000000') as never);
+
+    expect(result).toMatchObject({ success: false });
+    expect(paymentModel.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('IPN PG chưa ở trạng thái CAPTURED thì bị từ chối, không ghi nhận', async () => {
+    const { service, paymentModel } = make(makePayment());
+
+    const result = await service.handleSepayWebhook(pgWebhook(15000, 'CANCELLED') as never);
+
+    expect(result).toMatchObject({ success: false });
+    expect(paymentModel.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('IPN PG báo số tiền thiếu thì giữ PENDING, không chốt PAID', async () => {
+    const { service, paymentModel } = make(makePayment({ receivedAmount: 1 }));
+
+    const result = await service.handleSepayWebhook(pgWebhook(1) as never);
+
+    expect(result).toMatchObject({ success: true, partial: true });
+    expect(paymentModel.findOneAndUpdate).toHaveBeenCalledTimes(1);
   });
 
   it('chuyển thiếu thì giữ PENDING, báo cư dân còn thiếu và không chốt PAID', async () => {
