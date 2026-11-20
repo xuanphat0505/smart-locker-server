@@ -1,9 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsEnum,
   IsMongoId,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
@@ -39,12 +41,20 @@ export class QueryAdminPackagesDto extends PaginationQueryDto {
   search?: string;
 }
 
+// Chuẩn hóa lý do thu hồi: đổi mọi ký tự điều khiển và xuống dòng thành một dấu cách rồi cắt khoảng trắng hai đầu
+const normalizeReason = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.replace(/[\p{Cc}\s]+/gu, ' ').trim() : value;
+
 // Dữ liệu thu hồi một bưu kiện quá hạn về kho Ban Quản Lý
 export class ReturnPackageDto {
   @ApiPropertyOptional({ example: 'Quá hạn 48 giờ, chuyển về kho BQL' })
   @IsOptional()
+  @Transform(normalizeReason)
   @IsString()
   @MaxLength(200)
+  @Matches(/^(?!.*(?:https?:\/\/|www\.)).*$/i, {
+    message: 'Lý do thu hồi không được chứa đường dẫn',
+  })
   reason?: string;
 }
 

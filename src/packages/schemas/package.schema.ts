@@ -152,6 +152,10 @@ export class Package extends Document {
   @Prop({ required: false })
   pickedUpAt?: Date;
 
+  // Thời điểm Ban Quản Lý thu hồi bưu kiện về kho
+  @Prop({ required: false })
+  returnedAt?: Date;
+
   // Hạn chót lấy hàng trước khi chuyển sang trạng thái quá hạn
   @Prop({ required: true })
   expiredAt: Date;

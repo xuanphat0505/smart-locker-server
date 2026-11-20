@@ -640,6 +640,66 @@ export class NotificationsService {
     }
   }
 
+  // Báo cư dân bưu kiện đã bị Ban Quản Lý thu hồi về kho, kèm lý do nếu có để cư dân biết cần liên hệ
+  async notifyPackageReturned(
+    residentId: string,
+    buildingId: string,
+    packageInfo: {
+      id: string;
+      trackingNumber: string;
+      boxNumber: number;
+      lockerName: string;
+      reason?: string;
+    },
+  ): Promise<void> {
+    try {
+      const actionUrl = `/shipment/${packageInfo.id}`;
+      const summary = `Đơn hàng ${packageInfo.trackingNumber} tại Ngăn #${packageInfo.boxNumber} (${packageInfo.lockerName}) đã được Ban Quản Lý thu hồi về kho.`;
+      const contactHint = ' Vui lòng liên hệ Ban Quản Lý nếu cần nhận lại.';
+      const reasonText = packageInfo.reason?.trim() ? ` Lý do: ${packageInfo.reason.trim()}.` : '';
+      // Lý do do admin nhập chỉ nằm trong hộp thư của app, không đưa vào nội dung push hiển thị ngoài màn hình khóa
+      const message = `${summary}${reasonText}${contactHint}`;
+      const pushBody = `${summary}${contactHint}`;
+
+      await this.createNotification({
+        recipientId: residentId,
+        buildingId,
+        title: 'Bưu kiện đã bị thu hồi về kho',
+        message,
+        category: NotificationCategory.PACKAGE,
+        type: NotificationType.PACKAGE_RETURNED,
+        priority: NotificationPriority.HIGH,
+        actionUrl,
+        metadata: {
+          packageId: new Types.ObjectId(packageInfo.id),
+          trackingNumber: packageInfo.trackingNumber,
+          boxNumber: packageInfo.boxNumber,
+        },
+      });
+
+      await this.pushToUser(
+        residentId,
+        {
+          title: 'Bưu kiện đã bị thu hồi về kho',
+          body: pushBody,
+          data: {
+            type: 'PACKAGE_RETURNED',
+            packageId: packageInfo.id,
+            boxNumber: packageInfo.boxNumber,
+            actionUrl,
+          },
+          priority: 'high',
+          channelId: 'package_arrived',
+        },
+        'bưu kiện bị thu hồi',
+      );
+    } catch (error) {
+      this.logger.error(
+        `Lỗi khi điều phối thông báo bưu kiện bị thu hồi: ${getErrorMessage(error)}`,
+      );
+    }
+  }
+
   // Báo Ban Quản Lý của tòa nhà có bưu kiện quá hạn lưu kho để chủ động liên hệ cư dân
   async notifyAdminsPackageOverdue(
     buildingId: string,

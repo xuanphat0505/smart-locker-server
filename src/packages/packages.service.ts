@@ -676,6 +676,7 @@ export class PackagesService {
         droppedOffAt: pkg.droppedOffAt,
         expiredAt: pkg.expiredAt,
         pickedUpAt: pkg.pickedUpAt,
+        returnedAt: pkg.returnedAt,
         note: pkg.note,
       };
     });

@@ -121,7 +121,7 @@ export class PackagesAdminService {
     // Cập nhật có điều kiện trạng thái để hai yêu cầu đồng thời chỉ thành công một lần
     const updated = await this.packageModel.findOneAndUpdate(
       { _id: pkg._id, status: { $in: IN_LOCKER_STATUSES } },
-      { $set: { status: PackageStatus.RETURNED } },
+      { $set: { status: PackageStatus.RETURNED, returnedAt: new Date() } },
       { returnDocument: 'after' },
     );
     if (!updated) {
@@ -161,6 +161,19 @@ export class PackagesAdminService {
         },
       });
     }
+
+    // Báo cư dân biết kiện đã bị thu hồi; lỗi gửi thông báo đã được xử lý bên trong, không làm hỏng thao tác thu hồi
+    await this.notificationsService.notifyPackageReturned(
+      String(pkg.residentId),
+      String(pkg.buildingId),
+      {
+        id: String(pkg._id),
+        trackingNumber: pkg.trackingNumber,
+        boxNumber: pkg.boxNumber,
+        lockerName: locker?.name || 'Trạm Tủ Thông Minh',
+        reason: dto.reason,
+      },
+    );
 
     return {
       success: true,
