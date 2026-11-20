@@ -503,6 +503,7 @@ export class NotificationsService {
           trackingNumber: packageInfo.trackingNumber,
           boxNumber: packageInfo.boxNumber,
           lockerCode: packageInfo.lockerCode,
+          pinCode: packageInfo.pinCode,
         },
       });
 
