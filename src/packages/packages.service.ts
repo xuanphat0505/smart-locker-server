@@ -5,7 +5,6 @@ import {
   BadRequestException,
   ForbiddenException,
   UnauthorizedException,
-  HttpException,
   HttpStatus,
   Logger,
 } from '@nestjs/common';
@@ -40,6 +39,7 @@ import { PaymentsService } from '../payments/payments.service';
 import { PaymentType } from '../payments/enums/payment.enums';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { PickupAttemptLimiter } from './utils/pickup-attempt-limiter';
+import { PickupErrorCode, buildPickupError } from './utils/pickup-error.util';
 import type { VerifyFaceHardwareResult } from '../ai/interfaces/face-verification.interface';
 import { normalizeShipperName, resolveSessionName } from './utils/shipper-verification.util';
 import {
@@ -143,9 +143,10 @@ export class PackagesService {
     if (!key) return;
     const remainingSeconds = limiter.getRemainingLockSeconds(key);
     if (remainingSeconds > 0) {
-      throw new HttpException(
-        `Bạn đã thử sai quá nhiều lần. Vui lòng thử lại sau ${Math.ceil(remainingSeconds / 60)} phút`,
+      throw buildPickupError(
         HttpStatus.TOO_MANY_REQUESTS,
+        PickupErrorCode.PICKUP_LOCKED,
+        `Bạn đã thử sai quá nhiều lần. Vui lòng thử lại sau ${Math.ceil(remainingSeconds / 60)} phút`,
       );
     }
   }
@@ -784,7 +785,11 @@ export class PackagesService {
     // Chiếm quyền nhận kiện bằng một lệnh cập nhật duy nhất để hai yêu cầu đồng thời không cùng mở tủ
     const claimedPkg = await claimPackageForPickup(this.packageModel, pkg._id);
     if (!claimedPkg) {
-      throw new BadRequestException(claimErrorMessage);
+      throw buildPickupError(
+        HttpStatus.BAD_REQUEST,
+        PickupErrorCode.CODE_INVALID,
+        claimErrorMessage,
+      );
     }
 
     // Phát lệnh mở khóa Solenoid tới phần cứng ESP32 qua MQTT ngay sau khi chiếm quyền nhận kiện
@@ -836,7 +841,11 @@ export class PackagesService {
       .select('+apiKey');
 
     if (!locker) {
-      throw new NotFoundException(`Trạm tủ với mã ${dto.lockerCode} không tồn tại`);
+      throw buildPickupError(
+        HttpStatus.NOT_FOUND,
+        PickupErrorCode.LOCKER_NOT_FOUND,
+        `Trạm tủ với mã ${dto.lockerCode} không tồn tại`,
+      );
     }
 
     const attemptKey = this.buildAppAttemptKey(locker.code, authSource, actorId);
@@ -847,7 +856,9 @@ export class PackagesService {
       const isTokenValid = verifyDynamicQrToken(locker.apiKey, locker.code, dto.qrProofToken);
 
       if (!isTokenValid) {
-        throw new BadRequestException(
+        throw buildPickupError(
+          HttpStatus.BAD_REQUEST,
+          PickupErrorCode.QR_PROOF_EXPIRED,
           'Mã QR trạm tủ đã hết hạn hoặc không hợp lệ. Vui lòng chạm vào màn hình trạm tủ để làm mới mã QR.',
         );
       }
@@ -863,12 +874,18 @@ export class PackagesService {
 
     if (!pkg) {
       if (attemptKey) this.appPickupLimiter.recordFailure(attemptKey);
-      throw new BadRequestException('Mã OTP không chính xác hoặc bưu kiện đã được lấy trước đó');
+      throw buildPickupError(
+        HttpStatus.BAD_REQUEST,
+        PickupErrorCode.CODE_INVALID,
+        'Mã OTP không chính xác hoặc bưu kiện đã được lấy trước đó',
+      );
     }
     if (attemptKey) this.appPickupLimiter.reset(attemptKey);
 
     if (pkg.lockedUntil && pkg.lockedUntil > new Date()) {
-      throw new BadRequestException(
+      throw buildPickupError(
+        HttpStatus.BAD_REQUEST,
+        PickupErrorCode.PICKUP_LOCKED,
         'Ngăn tủ này đang bị tạm khóa do nhập sai nhiều lần. Vui lòng thử lại sau',
       );
     }
@@ -901,7 +918,11 @@ export class PackagesService {
     });
 
     if (!locker) {
-      throw new NotFoundException(`Trạm tủ với mã ${dto.lockerCode} không tồn tại`);
+      throw buildPickupError(
+        HttpStatus.NOT_FOUND,
+        PickupErrorCode.LOCKER_NOT_FOUND,
+        `Trạm tủ với mã ${dto.lockerCode} không tồn tại`,
+      );
     }
 
     const attemptKey = this.buildAppAttemptKey(locker.code, authSource, actorId);
@@ -917,7 +938,11 @@ export class PackagesService {
 
     if (!pkg) {
       if (attemptKey) this.appPickupLimiter.recordFailure(attemptKey);
-      throw new BadRequestException('Mã QR không hợp lệ hoặc bưu kiện đã được lấy trước đó');
+      throw buildPickupError(
+        HttpStatus.BAD_REQUEST,
+        PickupErrorCode.CODE_INVALID,
+        'Mã QR không hợp lệ hoặc bưu kiện đã được lấy trước đó',
+      );
     }
     if (attemptKey) this.appPickupLimiter.reset(attemptKey);
 
