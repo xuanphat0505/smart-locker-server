@@ -41,8 +41,9 @@ import { BuildingsService } from '../buildings/buildings.service';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { FaceVerificationService } from '../ai/services/face-verification.service';
-import { normalizeCode } from '../common/utils/text.util';
+import { normalizeCode, normalizeVnPhone } from '../common/utils/text.util';
 import {
+  RESET_PASSWORD_MAX_ATTEMPTS,
   ACCESS_TOKEN_TTL,
   REFRESH_TOKEN_TTL,
   TWO_FA_TEMP_TOKEN_TTL,
@@ -232,7 +233,7 @@ export class AuthService {
     const newUser = await this.usersService.create({
       name: dto.name.trim(),
       email: dto.email.toLowerCase().trim(),
-      phone: dto.phone.trim(),
+      phone: normalizeVnPhone(dto.phone),
       password: hashedPassword,
       role: Role.RESIDENT,
       buildingId: new Types.ObjectId(dto.buildingId),
@@ -321,7 +322,7 @@ export class AuthService {
     const newUser = await this.usersService.create({
       name: dto.name.trim(),
       email: dto.email.toLowerCase().trim(),
-      phone: dto.phone.trim(),
+      phone: normalizeVnPhone(dto.phone),
       password: hashedPassword,
       role: Role.SHIPPER,
       approvalStatus: ApprovalStatus.ACTIVE,
@@ -421,9 +422,20 @@ export class AuthService {
       throw new BadRequestException('Mã OTP đã hết hạn. Vui lòng gửi lại yêu cầu mới');
     }
 
-    const hashedOtp = sha256Hex(dto.otp);
+    // Đếm lượt thử trước khi so khớp để các request song song cũng không vượt được giới hạn
+    const userId = user._id.toString();
+    const attempts = await this.usersService.incrementResetOtpAttempts(userId);
+    if (attempts > RESET_PASSWORD_MAX_ATTEMPTS) {
+      await this.usersService.clearResetPasswordOtp(userId);
+      throw new BadRequestException('Bạn đã nhập sai quá nhiều lần. Vui lòng gửi lại yêu cầu mới');
+    }
 
-    if (hashedOtp !== user.resetPasswordOtp) {
+    const hashedOtp = sha256Hex(dto.otp);
+    const isOtpMatch =
+      hashedOtp.length === user.resetPasswordOtp.length &&
+      crypto.timingSafeEqual(Buffer.from(hashedOtp), Buffer.from(user.resetPasswordOtp));
+
+    if (!isOtpMatch) {
       throw new BadRequestException('Mã OTP không chính xác. Vui lòng kiểm tra lại');
     }
 

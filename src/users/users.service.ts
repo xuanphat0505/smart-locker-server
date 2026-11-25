@@ -33,6 +33,7 @@ import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 import { ActivityCategory, ActivityStatus } from '../activity-logs/enums/activity-log.enums';
 import { canAccessBuilding } from '../common/utils/building-scope.util';
 import { assertActiveAccount } from './utils/active-account.util';
+import { normalizeVnPhone } from '../common/utils/text.util';
 
 @Injectable()
 export class UsersService {
@@ -73,7 +74,7 @@ export class UsersService {
     const newAdmin = await this.create({
       name: dto.name.trim(),
       email: dto.email.toLowerCase().trim(),
-      phone: dto.phone.trim(),
+      phone: normalizeVnPhone(dto.phone),
       password: hashedPassword,
       role: Role.BUILDING_ADMIN,
       buildingId: new Types.ObjectId(dto.buildingId),
@@ -117,7 +118,7 @@ export class UsersService {
     const newResident = await this.create({
       name: dto.name.trim(),
       email: dto.email.toLowerCase().trim(),
-      phone: dto.phone.trim(),
+      phone: normalizeVnPhone(dto.phone),
       password: hashedPassword,
       role: Role.RESIDENT,
       buildingId: new Types.ObjectId(creator.buildingId),
@@ -162,7 +163,10 @@ export class UsersService {
 
   // Tìm kiếm người dùng theo số điện thoại duy nhất
   async findByPhone(phone: string): Promise<User | null> {
-    return this.userModel.findOne({ phone: phone.trim() }).exec();
+    // Tra cứu cả dạng 0xxx và +84xxx để khớp dữ liệu cũ chưa được chuẩn hóa
+    const normalized = normalizeVnPhone(phone);
+    const legacyForm = `+84${normalized.slice(1)}`;
+    return this.userModel.findOne({ phone: { $in: [normalized, legacyForm] } }).exec();
   }
 
   // Tìm kiếm thông tin người dùng theo mã định danh id
@@ -719,7 +723,25 @@ export class UsersService {
       .findByIdAndUpdate(userId, {
         resetPasswordOtp: hashedOtp,
         resetPasswordOtpExpires: expires,
+        resetPasswordOtpAttempts: 0,
         lastResetPasswordRequestedAt: new Date(),
+      })
+      .exec();
+  }
+
+  // Tăng nguyên tử số lần thử OTP đặt lại mật khẩu và trả về số lần sau khi tăng
+  async incrementResetOtpAttempts(userId: string): Promise<number> {
+    const updated = await this.userModel
+      .findByIdAndUpdate(userId, { $inc: { resetPasswordOtpAttempts: 1 } }, { new: true })
+      .exec();
+    return updated?.resetPasswordOtpAttempts ?? 0;
+  }
+
+  // Hủy mã OTP đặt lại mật khẩu hiện tại để buộc người dùng yêu cầu mã mới
+  async clearResetPasswordOtp(userId: string): Promise<void> {
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        $unset: { resetPasswordOtp: 1, resetPasswordOtpExpires: 1 },
       })
       .exec();
   }
