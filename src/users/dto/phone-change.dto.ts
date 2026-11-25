@@ -2,8 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsString, Length, Matches } from 'class-validator';
 import { trimString } from './update-profile.dto';
-
-const VN_PHONE_REGEX = /^(0|\+84)[35789][0-9]{8}$/;
+import { VN_PHONE_REGEX } from '../../common/utils/text.util';
 
 // Yêu cầu gửi mã OTP SMS tới số điện thoại mới muốn đổi sang
 export class RequestPhoneChangeDto {

@@ -8,6 +8,7 @@ import {
   IsArray,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { VN_PHONE_REGEX } from '../../common/utils/text.util';
 
 // DTO định nghĩa thông tin đăng nhập tài khoản bằng email và mật khẩu
 export class LoginDto {
@@ -32,8 +33,7 @@ export class LoginDto {
 // DTO định nghĩa dữ liệu gửi lên khi yêu cầu cấp lại mã truy cập mới từ Refresh Token
 export class RefreshTokenDto {
   @ApiProperty({
-    description:
-      'Mã Refresh Token hợp lệ đã được cấp khi đăng nhập hoặc đăng ký',
+    description: 'Mã Refresh Token hợp lệ đã được cấp khi đăng nhập hoặc đăng ký',
     example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
   })
   @IsNotEmpty({ message: 'Refresh Token không được để trống' })
@@ -64,7 +64,7 @@ export class RegisterResidentDto {
     example: '0912345678',
   })
   @IsNotEmpty({ message: 'Số điện thoại không được để trống' })
-  @Matches(/^(0|\+84)[3|5|7|8|9][0-9]{8}$/, {
+  @Matches(VN_PHONE_REGEX, {
     message: 'Số điện thoại không đúng định dạng Việt Nam',
   })
   phone: string;
@@ -103,8 +103,7 @@ export class RegisterResidentDto {
   faceImageBase64?: string;
 
   @ApiPropertyOptional({
-    description:
-      'Mảng chuỗi Base64 của 3 góc mặt: chính diện, nghiêng trái, nghiêng phải',
+    description: 'Mảng chuỗi Base64 của 3 góc mặt: chính diện, nghiêng trái, nghiêng phải',
     example: [
       'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
       'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
@@ -141,7 +140,7 @@ export class RegisterShipperDto {
     example: '0987654321',
   })
   @IsNotEmpty({ message: 'Số điện thoại không được để trống' })
-  @Matches(/^(0|\+84)[3|5|7|8|9][0-9]{8}$/, {
+  @Matches(VN_PHONE_REGEX, {
     message: 'Số điện thoại không đúng định dạng Việt Nam',
   })
   phone: string;
@@ -161,8 +160,7 @@ export class RegisterShipperDto {
   })
   @IsNotEmpty({ message: 'Tên đơn vị vận chuyển không được để trống' })
   @IsString({
-    message:
-      'Tên đơn vị vận chuyển phải là chuỗi ký tự (ví dụ: Shopee Xpress, GHTK)',
+    message: 'Tên đơn vị vận chuyển phải là chuỗi ký tự (ví dụ: Shopee Xpress, GHTK)',
   })
   carrierName: string;
 }

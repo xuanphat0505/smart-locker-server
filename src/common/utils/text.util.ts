@@ -16,6 +16,14 @@ export function escapeHtml(value: string | undefined | null): string {
   return String(value ?? '').replace(/[&<>"']/g, (char) => HTML_ESCAPE_MAP[char]);
 }
 
+// Biểu thức kiểm tra số điện thoại di động Việt Nam, chấp nhận đầu số 0 hoặc +84
+export const VN_PHONE_REGEX: RegExp = /^(0|\+84)[35789][0-9]{8}$/;
+
+// Đưa số điện thoại Việt Nam về dạng đầu số 0 để so khớp với dữ liệu đã lưu
+export function normalizeVnPhone(phone: string): string {
+  return phone.trim().replace(/^(\+84)/, '0');
+}
+
 // Đổi số điện thoại Việt Nam sang định dạng quốc tế E.164 (+84...) để gửi SMS
 export function toE164Vn(phone: string): string {
   const compact = phone.trim().replace(/[\s.-]/g, '');

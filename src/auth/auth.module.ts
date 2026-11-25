@@ -7,6 +7,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { AuthController } from './auth.controller';
+import { ACCESS_TOKEN_TTL } from './auth.constants';
 
 import { RolesGuard } from './guards/roles.guard';
 
@@ -28,7 +29,7 @@ import { AiModule } from '../ai/ai.module';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_ACCESS_SECRET_KEY'),
-        signOptions: { expiresIn: '15m' }, // Token truy cập hết hạn sau 15 phút
+        signOptions: { expiresIn: ACCESS_TOKEN_TTL },
       }),
     }),
   ],
