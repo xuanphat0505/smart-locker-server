@@ -157,19 +157,33 @@ export async function lookupOrderInvoiceByPayCode(payCode: string): Promise<numb
   return null;
 }
 
-// Tạo đường dẫn ảnh mã SePay QR phục vụ quét chuyển khoản ngân hàng tự động
+// Tạo đường dẫn ảnh mã QR chuyển khoản trên vietqr.app, kèm tên chủ tài khoản và thông tin hiển thị dưới mã
 export function generateSepayQrUrl(params: {
   bankName: string;
   accountNumber: string;
   amount: number;
   description: string;
+  accountName?: string;
   template?: string;
 }): string {
-  const { bankName, accountNumber, amount, description, template = 'compact' } = params;
+  const {
+    bankName,
+    accountNumber,
+    amount,
+    description,
+    accountName,
+    template = 'compact',
+  } = params;
   const encodedBank = encodeURIComponent(bankName);
+  const encodedAcc = encodeURIComponent(accountNumber);
   const encodedDesc = encodeURIComponent(description);
 
-  return `https://qr.sepay.vn/img?acc=${accountNumber}&bank=${encodedBank}&amount=${amount}&des=${encodedDesc}&template=${template}`;
+  const url =
+    `https://vietqr.app/img?bank=${encodedBank}&acc=${encodedAcc}` +
+    `&amount=${amount}&des=${encodedDesc}&template=${template}&showinfo=true`;
+
+  // Chỉ gắn tên chủ tài khoản khi đã cấu hình
+  return accountName ? `${url}&holder=${encodeURIComponent(accountName)}` : url;
 }
 
 // Sinh mã số giao dịch nguyên dương duy nhất có độ dài an toàn cho SePay

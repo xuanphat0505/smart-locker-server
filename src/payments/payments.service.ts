@@ -216,6 +216,7 @@ export class PaymentsService {
       accountNumber: bankAccount.accountNumber,
       amount,
       description,
+      accountName: bankAccount.accountName,
     });
     const paymentUrl = await generateSepayCheckoutUrl({ orderCode, amount, description });
     const qrPayload = generateVietQrPayload({
