@@ -162,6 +162,25 @@ export class PackagesService {
 
   // Tài xế bắt đầu gửi hàng: giữ chỗ ngăn tủ, mở khóa và tạo kiện ở trạng thái chờ đặt hàng; kiện chỉ được ghi nhận và báo cho cư dân khi cảm biến xác nhận hàng đã nằm trong ngăn
   async dropOff(dto: DropOffPackageDto) {
+    // Xác thực phiên tài xế trước mọi truy vấn khác để người chưa xác thực không dò được dữ liệu cư dân hay ngăn tủ
+    const normalizedShipperPhone = normalizeVnPhone(dto.shipperPhone);
+    const validSession = await this.shipperSessionModel.findOne({
+      phone: normalizedShipperPhone,
+      sessionToken: dto.sessionToken.trim(),
+      sessionExpiresAt: { $gt: new Date() },
+    });
+    // Dùng 403 thay vì 401 để interceptor của ứng dụng không nhầm với hết hạn token đăng nhập
+    if (!validSession) {
+      throw new ForbiddenException(
+        'Phiên xác thực tài xế không hợp lệ hoặc đã hết hạn, vui lòng xác thực lại số điện thoại',
+      );
+    }
+    const isShipperVerified = true;
+    const verifiedShipperName = validSession.name;
+    // Gia hạn phiên thêm 60 ngày kể từ lần gửi này (Sliding Expiration)
+    validSession.sessionExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+    await validSession.save();
+
     const formattedLockerCode = normalizeCode(dto.lockerCode);
     const locker = await this.lockerModel
       .findOne({ code: formattedLockerCode })
@@ -178,8 +197,10 @@ export class PackagesService {
     };
     const targetBuildingId = building?._id || locker.buildingId;
 
+    // Khớp cả dạng 0xxx và +84xxx để không lọt cư dân đã lưu số theo dạng quốc tế
+    const receiverPhone = normalizeVnPhone(dto.receiverPhone);
     const resident = await this.userModel.findOne({
-      phone: dto.receiverPhone.trim(),
+      phone: { $in: [receiverPhone, `+84${receiverPhone.slice(1)}`] },
       buildingId: targetBuildingId,
       role: Role.RESIDENT,
       approvalStatus: ApprovalStatus.ACTIVE,
@@ -248,29 +269,6 @@ export class PackagesService {
       droppedOffAt,
       resolveStorageLimitHours(building?.pricingPolicy),
     );
-
-    const normalizedShipperPhone = normalizeVnPhone(dto.shipperPhone);
-
-    // Kiểm tra trạng thái xác thực số điện thoại của tài xế và tự động gia hạn phiên (Sliding Expiration)
-    let isShipperVerified = false;
-    let verifiedShipperName: string | undefined;
-    const rollingExpiresAt = new Date(
-      Date.now() + 60 * 24 * 60 * 60 * 1000, // Gia hạn thêm 60 ngày kể từ lần gửi này
-    );
-
-    if (dto.sessionToken) {
-      const validSession = await this.shipperSessionModel.findOne({
-        phone: normalizedShipperPhone,
-        sessionToken: dto.sessionToken.trim(),
-        sessionExpiresAt: { $gt: new Date() },
-      });
-      if (validSession) {
-        isShipperVerified = true;
-        verifiedShipperName = validSession.name;
-        validSession.sessionExpiresAt = rollingExpiresAt;
-        await validSession.save();
-      }
-    }
 
     // Giữ chỗ ngăn bằng cập nhật có điều kiện để hai tài xế chọn cùng một ngăn thì chỉ một người giữ được
     const claimedBox = await this.boxModel.findOneAndUpdate(

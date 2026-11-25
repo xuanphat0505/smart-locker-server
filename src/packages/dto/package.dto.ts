@@ -28,6 +28,9 @@ export class DropOffPackageDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Matches(VN_PHONE_REGEX, {
+    message: 'Số điện thoại người nhận không đúng định dạng số điện thoại Việt Nam',
+  })
   receiverPhone: string;
 
   @ApiProperty({
@@ -36,6 +39,9 @@ export class DropOffPackageDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Matches(VN_PHONE_REGEX, {
+    message: 'Số điện thoại tài xế không đúng định dạng số điện thoại Việt Nam',
+  })
   shipperPhone: string;
 
   @ApiPropertyOptional({
@@ -86,13 +92,13 @@ export class DropOffPackageDto {
   @IsOptional()
   note?: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: 'shp_sess_3f8a920bc129487e',
     description: 'Token phiên giao hàng tin cậy sau khi tài xế đã xác thực OTP',
   })
   @IsString()
-  @IsOptional()
-  sessionToken?: string;
+  @IsNotEmpty()
+  sessionToken: string;
 }
 
 // DTO nhận bưu kiện bằng mã OTP 6 số tại màn hình Kiosk trạm tủ hoặc ứng dụng di động

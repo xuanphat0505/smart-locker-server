@@ -81,6 +81,10 @@ export class User extends Document {
   @Prop({ required: false })
   resetPasswordOtpExpires?: Date;
 
+  // Số lần đã thử mã OTP đặt lại mật khẩu hiện tại
+  @Prop({ required: false, default: 0 })
+  resetPasswordOtpAttempts?: number;
+
   // Thời điểm gửi yêu cầu đặt lại mật khẩu gần nhất để limit tần suất gửi
   @Prop({ required: false })
   lastResetPasswordRequestedAt?: Date;
