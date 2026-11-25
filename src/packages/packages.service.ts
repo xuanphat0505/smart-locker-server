@@ -73,7 +73,7 @@ import {
 } from './utils/package-code.util';
 import { getFirebaseAuth } from '../config/firebase-admin.config';
 import { SmsService } from '../sms/sms.service';
-import { toE164Vn } from '../common/utils/text.util';
+import { normalizeVnPhone, toE164Vn } from '../common/utils/text.util';
 import {
   OTP_MAX_SENDS_PER_HOUR,
   OTP_RESEND_INTERVAL_MS,
@@ -249,7 +249,7 @@ export class PackagesService {
       resolveStorageLimitHours(building?.pricingPolicy),
     );
 
-    const normalizedShipperPhone = dto.shipperPhone.trim().replace(/^(\+84)/, '0');
+    const normalizedShipperPhone = normalizeVnPhone(dto.shipperPhone);
 
     // Kiểm tra trạng thái xác thực số điện thoại của tài xế và tự động gia hạn phiên (Sliding Expiration)
     let isShipperVerified = false;
@@ -414,7 +414,7 @@ export class PackagesService {
 
   // Gửi mã xác thực OTP 6 số tới số điện thoại của tài xế giao hàng
   async sendShipperOtp(dto: SendShipperOtpDto) {
-    const normalizedPhone = dto.phone.trim().replace(/^(\+84)/, '0');
+    const normalizedPhone = normalizeVnPhone(dto.phone);
 
     const existingSession = await this.shipperSessionModel.findOne({
       phone: normalizedPhone,
@@ -476,7 +476,7 @@ export class PackagesService {
 
   // Xác minh mã OTP 6 số và cấp token phiên tin cậy 60 ngày cho tài xế
   async verifyShipperOtp(dto: VerifyShipperOtpDto) {
-    const normalizedPhone = dto.phone.trim().replace(/^(\+84)/, '0');
+    const normalizedPhone = normalizeVnPhone(dto.phone);
     const inputOtp = dto.otp.trim();
 
     const session = await this.shipperSessionModel.findOne({

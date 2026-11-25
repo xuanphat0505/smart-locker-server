@@ -42,6 +42,12 @@ import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { FaceVerificationService } from '../ai/services/face-verification.service';
 import { normalizeCode } from '../common/utils/text.util';
+import {
+  ACCESS_TOKEN_TTL,
+  REFRESH_TOKEN_TTL,
+  TWO_FA_TEMP_TOKEN_TTL,
+  RESET_PASSWORD_OTP_TTL_MS,
+} from './auth.constants';
 
 @Injectable()
 export class AuthService {
@@ -109,11 +115,11 @@ export class AuthService {
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
         secret: accessSecret,
-        expiresIn: '15m',
+        expiresIn: ACCESS_TOKEN_TTL,
       }),
       this.jwtService.signAsync(payload, {
         secret: refreshSecret,
-        expiresIn: '7d',
+        expiresIn: REFRESH_TOKEN_TTL,
       }),
     ]);
 
@@ -149,7 +155,7 @@ export class AuthService {
         },
         {
           secret: accessSecret,
-          expiresIn: '5m',
+          expiresIn: TWO_FA_TEMP_TOKEN_TTL,
         },
       );
 
@@ -389,7 +395,7 @@ export class AuthService {
 
     const otp = crypto.randomInt(100000, 1000000).toString();
     const hashedOtp = sha256Hex(otp);
-    const expires = new Date(Date.now() + 10 * 60 * 1000);
+    const expires = new Date(Date.now() + RESET_PASSWORD_OTP_TTL_MS);
 
     await this.usersService.setResetPasswordOtp(user._id.toString(), hashedOtp, expires);
 

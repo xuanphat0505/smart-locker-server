@@ -10,6 +10,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BoxSize } from '../../lockers/enums/locker.enums';
+import { VN_PHONE_REGEX } from '../../common/utils/text.util';
 
 // DTO tài xế gửi kiện hàng vào ngăn tủ không cần tài khoản (Guest Shipper)
 export class DropOffPackageDto {
@@ -152,7 +153,7 @@ export class SendShipperOtpDto {
   })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^(\+84|0)[3|5|7|8|9][0-9]{8}$/, {
+  @Matches(VN_PHONE_REGEX, {
     message: 'Số điện thoại tài xế không đúng định dạng số điện thoại Việt Nam',
   })
   phone: string;
@@ -166,7 +167,7 @@ export class VerifyShipperOtpDto {
   })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^(\+84|0)[3|5|7|8|9][0-9]{8}$/, {
+  @Matches(VN_PHONE_REGEX, {
     message: 'Số điện thoại tài xế không đúng định dạng số điện thoại Việt Nam',
   })
   phone: string;
